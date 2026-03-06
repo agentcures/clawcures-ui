@@ -6,8 +6,9 @@ test("validates plan and submits run job", async ({ page }) => {
   await bootStudio(page);
 
   // Keep run request decoupled from command-center program linkage.
+  await page.locator("summary").filter({ hasText: "Advanced operations" }).click();
   await page.fill("#programIdInput", "");
-  await page.getByRole("tab", { name: "Campaign" }).click();
+  await page.locator("summary").filter({ hasText: "Advanced planning" }).click();
   await page.locator("#dryRunToggle").check();
   await page.click("#validatePlanButton");
   await expectResultOutputContains(page, "Plan Validation");

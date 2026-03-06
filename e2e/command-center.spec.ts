@@ -4,6 +4,7 @@ import { bootStudio, expectResultOutputContains, uniqueId } from "./helpers";
 
 test("upserts program and evaluates stage gate", async ({ page }) => {
   await bootStudio(page);
+  await page.locator("summary").filter({ hasText: "Advanced operations" }).click();
 
   const programId = uniqueId("e2e-program");
   await page.fill("#programIdInput", programId);

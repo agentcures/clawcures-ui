@@ -8,11 +8,11 @@ export async function bootStudio(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Refua Studio" })).toBeVisible();
   await expect(page.locator("#connectionChip"))
     .toHaveClass(/online/, { timeout: 30_000 });
-  await expect.poll(async () => page.locator("#commandCenterCapabilities .command-cap").count(), {
+  await expect.poll(async () => page.getByTestId("agent-card").count(), {
     timeout: 30_000,
-  }).toBe(4);
+  }).toBeGreaterThan(0);
   await expect
-    .poll(async () => page.locator("#gateTemplateSelect option").count(), {
+    .poll(async () => page.locator("#objectiveTemplateSelect option").count(), {
       timeout: 30_000,
     })
     .toBeGreaterThan(0);

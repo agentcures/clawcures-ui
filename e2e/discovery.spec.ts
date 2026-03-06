@@ -16,9 +16,11 @@ test("renders promising drug report cards and supports score filtering", async (
   await expect(page.locator("#cureReportCard")).toContainText("Risks To Watch");
   await expect(page.locator("#cureReportCard")).toContainText("Binding");
   await expect(page.locator("#cureReportCard")).toContainText("ADMET");
+  await expect(page.locator("#candidateClinicalContext")).toContainText("Suggested trial ID");
 
-  await page.getByRole("button", { name: /EGFR Shield/ }).click();
+  await page.locator("#drugPortfolioCards [data-testid='drug-report-card']").nth(1).click();
   await expect(page.locator("#cureDetailHeader")).toContainText("EGFR Shield");
+  await expect(page.locator("#candidateClinicalContext")).toContainText("EGFR Shield");
   await expect(page.locator("#drugPortfolioDetail")).toContainText(
     '"candidate_id": "refua_affinity:egfr-shield"'
   );

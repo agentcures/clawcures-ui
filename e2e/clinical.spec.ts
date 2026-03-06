@@ -4,7 +4,7 @@ import { bootStudio, uniqueId } from "./helpers";
 
 test("creates trial, enrolls patient, and records outcome", async ({ page }) => {
   await bootStudio(page);
-  await page.getByRole("tab", { name: "Clinical" }).click();
+  await page.getByRole("tab", { name: "Promising Drugs" }).click();
 
   const trialId = uniqueId("e2e-trial");
   const patientId = uniqueId("patient");
@@ -29,6 +29,8 @@ test("creates trial, enrolls patient, and records outcome", async ({ page }) => 
   await page.click("#loadClinicalTrialButton");
   await expect(page.locator("#resultOutput")).toContainText("Clinical Trial Detail", { timeout: 30_000 });
   await expect(page.locator("#clinicalTrialSummary")).toContainText(trialId);
+
+  await page.locator("summary").filter({ hasText: "Advanced trial operations" }).click();
 
   await page.fill(
     "#clinicalPatientInput",

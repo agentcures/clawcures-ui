@@ -1045,7 +1045,7 @@ tbody tr.selected {
 
 .cures-layout {
   display: grid;
-  grid-template-columns: 1.1fr 1fr;
+  grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.06fr);
   gap: 0.78rem;
   align-items: start;
 }
@@ -1078,6 +1078,7 @@ tbody tr.selected {
   max-height: 52rem;
   overflow: auto;
   padding-right: 0.2rem;
+  min-width: 0;
 }
 
 .drug-card {
@@ -1156,6 +1157,8 @@ tbody tr.selected {
   background:
     linear-gradient(130deg, rgba(255, 158, 82, 0.14), rgba(71, 200, 187, 0.1)),
     rgba(8, 18, 25, 0.92);
+  min-width: 0;
+  overflow: hidden;
 }
 
 .cure-detail-header {
@@ -2394,5 +2397,172 @@ tbody tr.selected {
 
   .molstar-viewer {
     height: 300px;
+  }
+}
+
+.dashboard-simplified {
+  align-items: start;
+}
+
+.panel-head-stacked {
+  align-items: start;
+}
+
+.panel-copy {
+  margin: 0.3rem 0 0;
+  max-width: 60rem;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.widget-grid-compact {
+  margin-bottom: 0.8rem;
+}
+
+.agent-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.agent-card-kicker {
+  margin: 0 0 0.14rem;
+  font-family: var(--mono-font);
+  font-size: 0.6rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mission-columns {
+  align-items: start;
+}
+
+.advanced-drawer {
+  overflow: hidden;
+  padding: 0;
+}
+
+.advanced-drawer > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 1rem 1.1rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.advanced-drawer > summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-drawer > summary::after {
+  content: "+";
+  float: right;
+  color: var(--text-muted);
+  font-family: var(--mono-font);
+}
+
+.advanced-drawer[open] > summary::after {
+  content: "-";
+}
+
+.advanced-drawer-body {
+  border-top: 1px solid var(--line);
+  padding: 0 1.1rem 1.1rem;
+}
+
+.advanced-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.compact-head {
+  margin-bottom: 0.75rem;
+}
+
+.clinical-drilldown-block {
+  margin-top: 1rem;
+  padding-top: 0.95rem;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.8rem;
+}
+
+.clinical-drilldown-grid {
+  align-items: start;
+}
+
+.clinical-context-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    linear-gradient(130deg, rgba(255, 183, 77, 0.08), rgba(89, 184, 233, 0.06)),
+    var(--surface-soft);
+  padding: 0.8rem 0.9rem;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.clinical-context-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  color: var(--text-main);
+  font-size: 0.82rem;
+}
+
+.clinical-context-head span {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+.clinical-context-meta {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.clinical-context-meta span {
+  border-radius: 999px;
+  padding: 0.22rem 0.44rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line-soft);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+
+.inline-drawer {
+  margin-top: 0.2rem;
+}
+
+.inline-drawer > summary {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.inline-drawer .advanced-drawer-body {
+  padding-left: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+}
+
+@media (max-width: 1240px) {
+  .agent-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .agent-grid,
+  .clinical-context-head,
+  .clinical-context-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .clinical-context-head,
+  .clinical-context-meta {
+    display: grid;
   }
 }

@@ -51,6 +51,7 @@ const clinicalOpsInput = document.getElementById("clinicalOpsInput");
 const clinicalSimCountInput = document.getElementById("clinicalSimCountInput");
 const clinicalReplicatesInput = document.getElementById("clinicalReplicatesInput");
 const clinicalSeedInput = document.getElementById("clinicalSeedInput");
+const candidateClinicalContext = document.getElementById("candidateClinicalContext");
 const preclinicalStudyInput = document.getElementById("preclinicalStudyInput");
 const preclinicalRowsInput = document.getElementById("preclinicalRowsInput");
 const preclinicalSeedInput = document.getElementById("preclinicalSeedInput");
@@ -94,11 +95,14 @@ const tabPanels = Array.from(document.querySelectorAll("[data-tab-panel]"));
 const THEME_STORAGE_KEY = "refua_studio_theme";
 const TAB_STORAGE_KEY = "refua_studio_tab";
 const STRUCTURE_FILE_API = "/api/structure-file";
+const DEFAULT_TAB = "agents";
+const FOCUSED_AGENT_IDS = ["clawcures", "refua_mcp", "refua_clinical", "refua_preclinical", "refua_regulatory"];
 
 const state = {
   selectedJobId: null,
   selectedCandidateId: null,
   selectedClinicalTrialId: null,
+  lastSuggestedClinicalTrialId: null,
   pollTimer: null,
   examples: {
     objectives: [],
@@ -216,8 +220,8 @@ function setActiveTab(tabName) {
     _persistValue(TAB_STORAGE_KEY, tabName);
     return;
   }
-  if (tabName !== "overview") {
-    setActiveTab("overview");
+  if (tabName !== DEFAULT_TAB) {
+    setActiveTab(DEFAULT_TAB);
   }
 }
 
@@ -226,10 +230,10 @@ function initTabs() {
     return;
   }
   const storedTab = _storedValue(TAB_STORAGE_KEY);
-  setActiveTab(storedTab || "overview");
+  setActiveTab(storedTab || DEFAULT_TAB);
   for (const button of tabButtons) {
     button.addEventListener("click", () => {
-      const target = button.dataset.tabTarget || "overview";
+      const target = button.dataset.tabTarget || DEFAULT_TAB;
       setActiveTab(target);
     });
   }
@@ -879,29 +883,53 @@ function renderProductGrid(products) {
   if (!Array.isArray(products) || products.length === 0) {
     const empty = document.createElement("div");
     empty.className = "summary-item";
-    empty.textContent = "No product metadata available.";
+    empty.textContent = "No agent metadata available.";
     productGrid.appendChild(empty);
     return;
   }
 
-  for (const product of products) {
+  const focused = FOCUSED_AGENT_IDS.map((id) => products.find((item) => item?.id === id)).filter(Boolean);
+  const visibleProducts = focused.length > 0 ? focused : products.slice(0, 5);
+
+  for (const product of visibleProducts) {
     const card = document.createElement("article");
     const health = String(product.health || "degraded");
     card.className = `product-card product-card-${health}`;
+    card.dataset.testid = "agent-card";
 
-    const cli = product.cli ? `CLI: ${product.cli}` : "CLI: n/a";
-    const version = product.version || "unknown";
-    const reqPy = product.requires_python || "n/a";
+    let activity = "Ready";
+    if (product.id === "clawcures") {
+      activity =
+        state.telemetry.runningJobs > 0
+          ? `${state.telemetry.runningJobs} run${state.telemetry.runningJobs === 1 ? "" : "s"} active`
+          : "Ready to launch";
+    } else if (product.id === "refua_mcp") {
+      activity =
+        state.telemetry.toolsOnline > 0
+          ? `${state.telemetry.toolsOnline} tool${state.telemetry.toolsOnline === 1 ? "" : "s"} online`
+          : "Tool server not detected";
+    } else if (product.id === "refua_clinical") {
+      activity =
+        state.telemetry.trialCount > 0
+          ? `${state.telemetry.trialCount} managed trial${state.telemetry.trialCount === 1 ? "" : "s"}`
+          : "No managed trials yet";
+    } else if (product.id === "refua_preclinical") {
+      activity = "Ready for workups";
+    } else if (product.id === "refua_regulatory") {
+      activity = state.selectedJobId ? "Bundle ready from selected job" : "Waiting for completed job";
+    }
 
     card.innerHTML = `
       <div class="product-top">
-        <h4 class="product-name">${escapeHtml(product.name || product.id || "unknown")}</h4>
+        <div>
+          <p class="agent-card-kicker">Agent</p>
+          <h4 class="product-name">${escapeHtml(product.name || product.id || "unknown")}</h4>
+        </div>
         <span class="health-pill health-${escapeHtml(health)}">${escapeHtml(health)}</span>
       </div>
       <p class="product-role">${escapeHtml(product.role || "")}</p>
-      <p class="product-meta"><strong>Version:</strong> ${escapeHtml(version)}</p>
-      <p class="product-meta"><strong>Python:</strong> ${escapeHtml(reqPy)}</p>
-      <p class="product-meta"><strong>${escapeHtml(cli)}</strong></p>
+      <p class="product-meta"><strong>Activity:</strong> ${escapeHtml(activity)}</p>
+      <p class="product-meta"><strong>Repo:</strong> ${escapeHtml(product.repo || "n/a")}</p>
     `;
     productGrid.appendChild(card);
   }
@@ -947,6 +975,9 @@ async function refreshHealth() {
     state.telemetry.runningJobs = Number(running) || 0;
     state.telemetry.toolsOnline = Number(payload.tools_count) || 0;
     updateTelemetryWidgets();
+    if (state.ecosystem?.products) {
+      renderProductGrid(state.ecosystem.products);
+    }
     setConnection(true, `Online (${payload.tools_count} tools, ${running} running)`);
   } catch (err) {
     setConnection(false, `Offline (${err.message})`);
@@ -1027,6 +1058,9 @@ function renderJobsTable(jobs) {
     tr.addEventListener("click", async () => {
       state.selectedJobId = job.job_id;
       await loadJob(job.job_id);
+      if (state.ecosystem?.products) {
+        renderProductGrid(state.ecosystem.products);
+      }
       renderJobsTable(jobs);
     });
 
@@ -1044,6 +1078,9 @@ async function refreshJobs() {
   renderJobsTable(jobs);
   state.telemetry.runningJobs = Number(payload.counts?.running || 0);
   updateTelemetryWidgets();
+  if (state.ecosystem?.products) {
+    renderProductGrid(state.ecosystem.products);
+  }
 
   if (!state.selectedJobId && Array.isArray(jobs) && jobs.length > 0) {
     state.selectedJobId = jobs[0].job_id;
@@ -1088,12 +1125,13 @@ function renderDrugDetail(candidate) {
   if (!candidate) {
     cureDetailHeader.textContent = "Select a promising drug";
     cureAssessment.textContent =
-      "Pick a card to inspect all ADMET properties and the protein-ligand complex.";
+      "Pick a card to inspect the report card, ADMET profile, and linked clinical drill-down.";
     cureMetricPills.innerHTML = "";
     cureReportCard.innerHTML = '<div class="admet-empty">Select a report card to inspect the grading breakdown.</div>';
     admetKeyMetrics.innerHTML = '<div class="admet-empty">No ADMET metrics yet.</div>';
     admetPropertiesGrid.innerHTML = '<div class="admet-empty">No ADMET properties yet.</div>';
     drugPortfolioDetail.textContent = "Select a candidate to view full details.";
+    renderClinicalCandidateContext(null);
     setMolstarStatus("Select a candidate to load a complex structure.", "info");
     return;
   }
@@ -1205,6 +1243,7 @@ function renderDrugDetail(candidate) {
   }
 
   drugPortfolioDetail.textContent = pretty(candidate);
+  renderClinicalCandidateContext(candidate);
   void refreshMolstarForCandidate(candidate);
 }
 
@@ -1317,6 +1356,67 @@ function resolveClinicalTrialId() {
   return fromInput || null;
 }
 
+function selectedDrugCandidate() {
+  if (!Array.isArray(state.drugCandidates) || !state.selectedCandidateId) {
+    return null;
+  }
+  return state.drugCandidates.find((item) => item?.candidate_id === state.selectedCandidateId) || null;
+}
+
+function selectedClinicalTrial() {
+  const trialId = resolveClinicalTrialId();
+  if (!Array.isArray(state.clinicalTrials) || !trialId) {
+    return null;
+  }
+  return state.clinicalTrials.find((item) => item?.trial_id === trialId) || null;
+}
+
+function suggestedClinicalTrialId(candidate) {
+  const seed = candidate?.name || candidate?.candidate_id || candidate?.target || "lead";
+  return String(seed)
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "")
+    .slice(0, 48)
+    .concat("-trial");
+}
+
+function renderClinicalCandidateContext(candidate) {
+  if (!candidateClinicalContext) {
+    return;
+  }
+  if (!candidate) {
+    candidateClinicalContext.textContent = "Select a promising drug to focus trial review.";
+    return;
+  }
+
+  const suggestedTrialId = suggestedClinicalTrialId(candidate);
+  const selectedTrial = selectedClinicalTrial();
+  if (
+    !clinicalTrialIdInput.value.trim() ||
+    clinicalTrialIdInput.value.trim() === state.lastSuggestedClinicalTrialId
+  ) {
+    clinicalTrialIdInput.value = suggestedTrialId;
+    state.lastSuggestedClinicalTrialId = suggestedTrialId;
+  }
+
+  const trialStatus = selectedTrial
+    ? `Loaded trial ${selectedTrial.trial_id} (${selectedTrial.status || "planned"})`
+    : `${state.clinicalTrials.length} managed trial${state.clinicalTrials.length === 1 ? "" : "s"} available`;
+
+  candidateClinicalContext.innerHTML = `
+    <div class="clinical-context-head">
+      <strong>${escapeHtml(candidate.name || candidate.candidate_id || "Selected lead")}</strong>
+      <span>${escapeHtml(trialStatus)}</span>
+    </div>
+    <div class="clinical-context-meta">
+      <span>Target ${escapeHtml(shortText(candidate.target, 36))}</span>
+      <span>Score ${escapeHtml(valueText(candidate.score))}</span>
+      <span>Suggested trial ID ${escapeHtml(suggestedTrialId)}</span>
+    </div>
+  `;
+}
+
 function renderClinicalTrialOptions(trials) {
   clinicalTrialSelect.innerHTML = "";
 
@@ -1326,6 +1426,7 @@ function renderClinicalTrialOptions(trials) {
     option.textContent = "No managed trials";
     clinicalTrialSelect.appendChild(option);
     clinicalTrialSummary.textContent = "No trial selected.";
+    renderClinicalCandidateContext(selectedDrugCandidate());
     return;
   }
 
@@ -1355,6 +1456,7 @@ function renderClinicalTrialOptions(trials) {
   if (selected) {
     clinicalTrialSummary.textContent = pretty(selected);
   }
+  renderClinicalCandidateContext(selectedDrugCandidate());
 }
 
 async function refreshClinicalTrials() {
