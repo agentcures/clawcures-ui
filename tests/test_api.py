@@ -180,6 +180,10 @@ class StudioApiTest(unittest.TestCase):
         self.assertGreaterEqual(payload["summary"]["returned_candidates"], 1)
         self.assertGreaterEqual(payload["summary"]["with_admet_properties"], 1)
         self.assertIn("admet", payload["candidates"][0])
+        self.assertIn("report_card", payload["candidates"][0])
+        self.assertEqual(
+            payload["candidates"][0]["report_card"]["readiness"]["label"], "Advance"
+        )
 
         alias_payload = self._request(
             "GET", "/api/promising-cures?min_score=0&limit=20"

@@ -9,9 +9,13 @@ test("validates wetlab protocol and builds/verifies regulatory bundle", async ({
   await expectResultOutputContains(page, "WetLab Protocol Validation");
   await expect(page.locator("#resultOutput")).toContainText('"valid"');
 
+  await page.getByRole("tab", { name: "Campaign" }).click();
+
   // Avoid linking build requests to a program id that does not yet exist.
-  await page.fill("#programIdInput", "");
   await page.locator("#asyncToggle").uncheck();
+
+  await page.getByRole("tab", { name: "Overview" }).click();
+  await page.fill("#programIdInput", "");
 
   const bundleDir = `.playwright-data/${uniqueId("bundle")}`;
   await page.fill("#regulatoryOutputDirInput", bundleDir);

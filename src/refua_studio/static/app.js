@@ -27,6 +27,7 @@ const drugPortfolioDetail = document.getElementById("drugPortfolioDetail");
 const cureDetailHeader = document.getElementById("cureDetailHeader");
 const cureAssessment = document.getElementById("cureAssessment");
 const cureMetricPills = document.getElementById("cureMetricPills");
+const cureReportCard = document.getElementById("cureReportCard");
 const admetKeyMetrics = document.getElementById("admetKeyMetrics");
 const admetPropertiesGrid = document.getElementById("admetPropertiesGrid");
 const molstarStatus = document.getElementById("molstarStatus");
@@ -407,6 +408,106 @@ function normalizedAdmet(candidate) {
     status: admet.status,
     assessment: admet.assessment,
   };
+}
+
+function normalizedReportCard(candidate) {
+  const fallbackTone = candidate?.promising ? "watch" : "rework";
+  const fallbackLabel = candidate?.promising ? "Watch" : "Rework";
+  const payload = candidate?.report_card;
+
+  if (!payload || typeof payload !== "object") {
+    return {
+      headline: `- / ${fallbackLabel}`,
+      overall_grade: "-",
+      overall_score: candidate?.score,
+      readiness: { tone: fallbackTone, label: fallbackLabel },
+      decision: candidate?.assessment || "No report card decision available yet.",
+      domains: [],
+      strengths: [],
+      concerns: [],
+    };
+  }
+
+  const readiness = payload.readiness && typeof payload.readiness === "object" ? payload.readiness : {};
+  const domains = Array.isArray(payload.domains)
+    ? payload.domains.filter((item) => item && typeof item === "object")
+    : [];
+  const strengths = Array.isArray(payload.strengths)
+    ? payload.strengths.filter((item) => typeof item === "string" && item.trim())
+    : [];
+  const concerns = Array.isArray(payload.concerns)
+    ? payload.concerns.filter((item) => typeof item === "string" && item.trim())
+    : [];
+
+  return {
+    headline: payload.headline || `${payload.overall_grade || "-"} / ${readiness.label || fallbackLabel}`,
+    overall_grade: payload.overall_grade || "-",
+    overall_score: typeof payload.overall_score === "number" ? payload.overall_score : candidate?.score,
+    readiness: {
+      tone: readiness.tone || fallbackTone,
+      label: readiness.label || fallbackLabel,
+    },
+    decision: payload.decision || candidate?.assessment || "No report card decision available yet.",
+    domains: domains.map((domain) => ({
+      id: domain.id || "domain",
+      label: domain.label || domain.id || "Domain",
+      grade: domain.grade || "N/A",
+      display_value: domain.display_value || "-",
+      note: domain.note || "",
+    })),
+    strengths,
+    concerns,
+  };
+}
+
+function reportToneClass(tone) {
+  if (tone === "advance") {
+    return "is-advance";
+  }
+  if (tone === "watch") {
+    return "is-watch";
+  }
+  return "is-rework";
+}
+
+function renderReportDomains(domains, { compact = false } = {}) {
+  if (!Array.isArray(domains) || domains.length === 0) {
+    return '<div class="admet-empty">No report domains available yet.</div>';
+  }
+
+  const containerClass = compact ? "report-domain compact" : "report-domain";
+  return domains
+    .map(
+      (domain) => `
+      <div class="${containerClass}" data-testid="drug-report-domain">
+        <div class="report-domain-head">
+          <span class="report-domain-label">${escapeHtml(domain.label)}</span>
+          <span class="report-domain-grade">${escapeHtml(domain.grade)}</span>
+        </div>
+        <div class="report-domain-value">${escapeHtml(domain.display_value || "-")}</div>
+        ${
+          compact
+            ? ""
+            : `<div class="report-domain-note">${escapeHtml(domain.note || "No note available.")}</div>`
+        }
+      </div>
+    `
+    )
+    .join("");
+}
+
+function renderReportNotes(title, items, tone, emptyText) {
+  const notes = Array.isArray(items) && items.length > 0 ? items : [emptyText];
+  return `
+    <section class="report-note-panel ${tone}">
+      <div class="report-note-heading">${escapeHtml(title)}</div>
+      <ul class="report-note-list">
+        ${notes
+          .map((item) => `<li class="report-note-item">${escapeHtml(item)}</li>`)
+          .join("")}
+      </ul>
+    </section>
+  `;
 }
 
 function setMolstarStatus(message, tone = "info") {
@@ -989,6 +1090,7 @@ function renderDrugDetail(candidate) {
     cureAssessment.textContent =
       "Pick a card to inspect all ADMET properties and the protein-ligand complex.";
     cureMetricPills.innerHTML = "";
+    cureReportCard.innerHTML = '<div class="admet-empty">Select a report card to inspect the grading breakdown.</div>';
     admetKeyMetrics.innerHTML = '<div class="admet-empty">No ADMET metrics yet.</div>';
     admetPropertiesGrid.innerHTML = '<div class="admet-empty">No ADMET properties yet.</div>';
     drugPortfolioDetail.textContent = "Select a candidate to view full details.";
@@ -997,22 +1099,34 @@ function renderDrugDetail(candidate) {
   }
 
   const admet = normalizedAdmet(candidate);
+  const report = normalizedReportCard(candidate);
   const metrics = candidate.metrics || {};
   const score = valueText(candidate.score);
   const cureName = candidate.name || candidate.smiles || candidate.candidate_id;
   const admetAssessment = candidate.assessment || admet.assessment || "No explicit assessment provided.";
 
   cureDetailHeader.innerHTML = `
-    <div class="cure-detail-title">${escapeHtml(shortText(cureName, 120))}</div>
-    <div class="cure-detail-meta">
-      <span>${escapeHtml(candidate.promising ? "Promising" : "Needs optimization")}</span>
-      <span>Score ${escapeHtml(score)}</span>
-      <span>${escapeHtml(candidate.tool || "unknown_tool")}</span>
+    <div class="cure-report-hero">
+      <div>
+        <div class="cure-detail-title">${escapeHtml(shortText(cureName, 120))}</div>
+        <div class="cure-detail-meta">
+          <span>${escapeHtml(candidate.promising ? "Promising" : "Needs optimization")}</span>
+          <span>Score ${escapeHtml(score)}</span>
+          <span>${escapeHtml(candidate.tool || "unknown_tool")}</span>
+          <span>${escapeHtml(shortText(candidate.target, 36))}</span>
+        </div>
+      </div>
+      <div class="cure-grade-badge ${reportToneClass(report.readiness.tone)}" data-testid="detail-report-grade">
+        <div class="cure-grade-label">${escapeHtml(report.readiness.label)}</div>
+        <div class="cure-grade-value">${escapeHtml(report.overall_grade)}</div>
+      </div>
     </div>
   `;
-  cureAssessment.textContent = admetAssessment;
+  cureAssessment.textContent =
+    report.decision === admetAssessment ? report.decision : `${report.decision} ${admetAssessment}`;
 
   const metricEntries = [
+    ["Composite", candidate.score],
     ["pBind", metrics.binding_probability],
     ["ADMET", metrics.admet_score ?? admet.key_metrics?.admet_score],
     ["Affinity", metrics.affinity],
@@ -1025,6 +1139,36 @@ function renderDrugDetail(candidate) {
         `<span class="metric-chip">${escapeHtml(label)} ${escapeHtml(valueText(value))}</span>`
     )
     .join("");
+
+  cureReportCard.innerHTML = `
+    <div class="cure-report-summary">
+      <div>
+        <div class="report-summary-label">Report Card</div>
+        <div class="report-summary-headline">${escapeHtml(report.headline)}</div>
+      </div>
+      <div class="report-summary-score">
+        <span>Composite</span>
+        <strong>${escapeHtml(metricText(report.overall_score ?? candidate.score, 1))}</strong>
+      </div>
+    </div>
+    <div class="cure-report-domains">
+      ${renderReportDomains(report.domains)}
+    </div>
+    <div class="cure-report-notes">
+      ${renderReportNotes(
+        "Strengths",
+        report.strengths,
+        "is-good",
+        "No major strengths have been called out in the current screen."
+      )}
+      ${renderReportNotes(
+        "Risks To Watch",
+        report.concerns,
+        "is-watch",
+        "No material concerns are flagged in the current screen."
+      )}
+    </div>
+  `;
 
   const keyMetricEntries = Object.entries(admet.key_metrics || {});
   if (keyMetricEntries.length === 0) {
@@ -1089,30 +1233,51 @@ function renderDrugCards(candidates) {
   for (const candidate of visibleCandidates) {
     const card = document.createElement("button");
     card.className = "drug-card";
+    card.type = "button";
+    card.dataset.testid = "drug-report-card";
+    card.setAttribute("aria-pressed", candidate.candidate_id === state.selectedCandidateId ? "true" : "false");
     if (candidate.candidate_id === state.selectedCandidateId) {
       card.classList.add("selected");
     }
 
-    const metrics = candidate.metrics || {};
-    const admet = normalizedAdmet(candidate);
-    const admetScore = metrics.admet_score ?? admet.key_metrics?.admet_score;
+    const report = normalizedReportCard(candidate);
+    const leadStrength =
+      report.strengths[0] || "No major strength called out in the current screen.";
+    const watchItem =
+      report.concerns[0] || "No material concern flagged in the current screen.";
     card.innerHTML = `
       <div class="drug-card-top">
-        <div class="drug-name">${escapeHtml(
-          shortText(candidate.name || candidate.smiles || candidate.candidate_id, 46)
-        )}</div>
-        <div class="drug-score">${escapeHtml(metricText(candidate.score, 1))}</div>
+        <div>
+          <div class="drug-name">${escapeHtml(
+            shortText(candidate.name || candidate.smiles || candidate.candidate_id, 46)
+          )}</div>
+          <div class="drug-meta">
+            ${escapeHtml(candidate.promising ? "Promising lead" : "Needs optimization")}<br />
+            Target: ${escapeHtml(shortText(candidate.target, 28))}<br />
+            Tool: ${escapeHtml(shortText(candidate.tool, 22))}
+          </div>
+        </div>
+        <div class="drug-card-score-stack">
+          <div class="drug-card-grade ${reportToneClass(report.readiness.tone)}" data-testid="drug-report-grade">
+            <span class="drug-card-grade-label">${escapeHtml(report.readiness.label)}</span>
+            <span class="drug-card-grade-value">${escapeHtml(report.overall_grade)}</span>
+          </div>
+          <div class="drug-score">${escapeHtml(metricText(candidate.score, 1))}</div>
+        </div>
       </div>
-      <div class="drug-meta">
-        Status: ${escapeHtml(candidate.promising ? "Promising" : "Needs optimization")}<br />
-        Target: ${escapeHtml(shortText(candidate.target, 28))}<br />
-        Tool: ${escapeHtml(shortText(candidate.tool, 22))}
+      <div class="drug-report-domains">
+        ${renderReportDomains(report.domains, { compact: true })}
       </div>
-      <div class="metric-row">
-        <span class="metric-chip">pBind ${escapeHtml(metricText(metrics.binding_probability, 2))}</span>
-        <span class="metric-chip">ADMET ${escapeHtml(metricText(admetScore, 2))}</span>
-        <span class="metric-chip">Affinity ${escapeHtml(metricText(metrics.affinity, 2))}</span>
-        <span class="metric-chip">IC50 ${escapeHtml(metricText(metrics.ic50, 2))}</span>
+      <div class="report-summary">${escapeHtml(shortText(report.decision, 118))}</div>
+      <div class="report-note-strip">
+        <div class="report-note-pill is-good">
+          <span class="report-note-kicker">Strength</span>
+          <span>${escapeHtml(shortText(leadStrength, 88))}</span>
+        </div>
+        <div class="report-note-pill is-watch">
+          <span class="report-note-kicker">Watch</span>
+          <span>${escapeHtml(shortText(watchItem, 88))}</span>
+        </div>
       </div>
     `;
 

@@ -54,6 +54,9 @@ class DrugPortfolioTest(unittest.TestCase):
         self.assertGreater(candidate["score"], 50)
         self.assertEqual(candidate["source"]["objective"], "test objective")
         self.assertIn("admet", candidate)
+        self.assertIn("report_card", candidate)
+        self.assertEqual(candidate["report_card"]["domains"][0]["label"], "Binding")
+        self.assertGreaterEqual(len(candidate["report_card"]["strengths"]), 1)
 
     def test_prefers_clawcures_promising_cure_payload(self) -> None:
         jobs = [
@@ -102,6 +105,9 @@ class DrugPortfolioTest(unittest.TestCase):
         self.assertEqual(candidate["candidate_id"], "refua_fold:kras-alpha")
         self.assertEqual(candidate["admet"]["status"], "success")
         self.assertIn("results[0].predictions.hERG", candidate["admet"]["properties"])
+        self.assertEqual(candidate["report_card"]["overall_grade"], "A")
+        self.assertEqual(candidate["report_card"]["readiness"]["label"], "Advance")
+        self.assertGreaterEqual(len(candidate["report_card"]["concerns"]), 1)
 
 
 if __name__ == "__main__":

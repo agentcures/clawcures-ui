@@ -2050,6 +2050,259 @@ tbody tr.selected {
   font-family: var(--ui-font);
 }
 
+.drug-card-top {
+  align-items: flex-start;
+}
+
+.drug-card-score-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.38rem;
+  min-width: 6.4rem;
+}
+
+.drug-card-grade,
+.cure-grade-badge {
+  display: grid;
+  gap: 0.12rem;
+  justify-items: center;
+  min-width: 4.4rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+  padding: 0.34rem 0.48rem;
+}
+
+.drug-card-grade-label,
+.cure-grade-label {
+  font-family: var(--mono-font);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.drug-card-grade-value,
+.cure-grade-value {
+  font-family: "Bebas Neue", var(--mono-font);
+  font-size: 1.44rem;
+  line-height: 0.95;
+  letter-spacing: 0.03em;
+  color: var(--text-main);
+}
+
+.drug-card-grade.is-advance,
+.cure-grade-badge.is-advance {
+  border-color: color-mix(in oklab, #198754 38%, var(--line));
+  background: color-mix(in oklab, #198754 12%, var(--surface-soft));
+}
+
+.drug-card-grade.is-watch,
+.cure-grade-badge.is-watch {
+  border-color: color-mix(in oklab, #d97706 36%, var(--line));
+  background: color-mix(in oklab, #d97706 12%, var(--surface-soft));
+}
+
+.drug-card-grade.is-rework,
+.cure-grade-badge.is-rework {
+  border-color: color-mix(in oklab, #c0392b 34%, var(--line));
+  background: color-mix(in oklab, #c0392b 11%, var(--surface-soft));
+}
+
+.drug-report-domains,
+.cure-report-domains {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.44rem;
+}
+
+.drug-report-domains {
+  margin-bottom: 0.54rem;
+}
+
+.report-domain {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 0.5rem 0.56rem;
+}
+
+.report-domain.compact {
+  padding: 0.42rem 0.46rem;
+}
+
+.report-domain-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.42rem;
+}
+
+.report-domain-label {
+  font-size: 0.71rem;
+  color: var(--text-muted);
+}
+
+.report-domain-grade {
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-main);
+  font-family: var(--mono-font);
+  font-size: 0.67rem;
+  padding: 0.08rem 0.36rem;
+}
+
+.report-domain-value {
+  margin-top: 0.22rem;
+  font-family: var(--mono-font);
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.report-domain-note {
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  line-height: 1.42;
+  color: var(--text-muted);
+}
+
+.report-summary {
+  margin-bottom: 0.56rem;
+  font-size: 0.77rem;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+
+.report-note-strip {
+  display: grid;
+  gap: 0.36rem;
+}
+
+.report-note-pill {
+  display: grid;
+  gap: 0.18rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 0.44rem 0.5rem;
+  font-size: 0.73rem;
+  line-height: 1.42;
+}
+
+.report-note-pill.is-good {
+  border-color: color-mix(in oklab, #198754 32%, var(--line));
+}
+
+.report-note-pill.is-watch {
+  border-color: color-mix(in oklab, #d97706 32%, var(--line));
+}
+
+.report-note-kicker {
+  font-family: var(--mono-font);
+  font-size: 0.61rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.cure-report-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.8rem;
+}
+
+.cure-report-card {
+  display: grid;
+  gap: 0.62rem;
+  margin-bottom: 0.66rem;
+}
+
+.cure-report-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 0.62rem 0.68rem;
+}
+
+.report-summary-label {
+  font-family: var(--mono-font);
+  font-size: 0.64rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.report-summary-headline {
+  margin-top: 0.18rem;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.report-summary-score {
+  display: grid;
+  justify-items: end;
+  gap: 0.12rem;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.report-summary-score strong {
+  font-family: var(--mono-font);
+  font-size: 1rem;
+  color: var(--text-main);
+}
+
+.cure-report-notes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.report-note-panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 0.58rem 0.64rem;
+}
+
+.report-note-panel.is-good {
+  border-color: color-mix(in oklab, #198754 32%, var(--line));
+}
+
+.report-note-panel.is-watch {
+  border-color: color-mix(in oklab, #d97706 32%, var(--line));
+}
+
+.report-note-heading {
+  font-family: var(--mono-font);
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.38rem;
+}
+
+.report-note-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.34rem;
+}
+
+.report-note-item {
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+
 @media (max-width: 1240px) {
   .command-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2111,6 +2364,9 @@ tbody tr.selected {
   .product-grid,
   .drug-summary-grid,
   .drug-cards,
+  .drug-report-domains,
+  .cure-report-domains,
+  .cure-report-notes,
   .command-cap-grid,
   .admet-key-grid {
     grid-template-columns: 1fr;
@@ -2125,6 +2381,15 @@ tbody tr.selected {
 
   .admet-prop-value {
     text-align: left;
+  }
+
+  .cure-report-hero,
+  .cure-report-summary {
+    flex-direction: column;
+  }
+
+  .drug-card-score-stack {
+    align-items: flex-start;
   }
 
   .molstar-viewer {

@@ -23,6 +23,22 @@ _ADMET_HINTS: tuple[str, ...] = (
     "cyp",
 )
 
+_HIGH_RISK_TOKENS: tuple[str, ...] = (
+    "high risk",
+    "unsafe",
+    "toxic",
+    "liability",
+    "poor safety",
+)
+
+_FAVORABLE_TOKENS: tuple[str, ...] = (
+    "favorable",
+    "promising",
+    "good",
+    "clean",
+    "acceptable",
+)
+
 
 @dataclass(frozen=True)
 class DrugCandidate:
@@ -44,6 +60,9 @@ class DrugCandidate:
     tool_args: dict[str, Any]
     tool_output: Any
 
+    def report_card(self) -> dict[str, Any]:
+        return _build_report_card(self)
+
     def to_json(self, *, include_raw: bool) -> dict[str, Any]:
         payload = {
             "candidate_id": self.candidate_id,
@@ -62,6 +81,7 @@ class DrugCandidate:
                 "updated_at": self.source_updated_at,
                 "objective": self.objective,
             },
+            "report_card": self.report_card(),
             "evidence_paths": self.evidence_paths,
             "tool_args": self.tool_args,
         }
@@ -115,6 +135,316 @@ def build_drug_portfolio(
             candidate.to_json(include_raw=include_raw) for candidate in selected
         ],
     }
+
+
+def _build_report_card(candidate: DrugCandidate) -> dict[str, Any]:
+    metrics = candidate.metrics
+    admet_key_metrics = candidate.admet.get("key_metrics")
+    admet_score_raw = metrics.get("admet_score")
+    if admet_score_raw is None and isinstance(admet_key_metrics, Mapping):
+        admet_score_raw = _coerce_float(admet_key_metrics.get("admet_score"))
+
+    binding_score = _percent_score(metrics.get("binding_probability"))
+    admet_score = _percent_score(admet_score_raw)
+    potency_score, potency_display, potency_note = _potency_report(metrics)
+    evidence_score = _evidence_report_score(candidate)
+
+    strengths = _report_strengths(
+        candidate=candidate,
+        binding_score=binding_score,
+        admet_score=admet_score,
+        potency_score=potency_score,
+        evidence_score=evidence_score,
+    )
+    concerns = _report_concerns(
+        candidate=candidate,
+        binding_score=binding_score,
+        admet_score=admet_score,
+        potency_score=potency_score,
+        evidence_score=evidence_score,
+    )
+    readiness = _report_readiness(
+        candidate=candidate,
+        binding_score=binding_score,
+        admet_score=admet_score,
+        potency_score=potency_score,
+    )
+    overall_grade = _grade_from_score(candidate.score)
+
+    return {
+        "headline": f"{overall_grade} / {readiness['label']}",
+        "overall_grade": overall_grade,
+        "overall_score": candidate.score,
+        "readiness": readiness,
+        "decision": _readiness_decision(readiness["tone"]),
+        "domains": [
+            _domain_entry(
+                domain_id="binding",
+                label="Binding",
+                score=binding_score,
+                display_value=_format_report_value(metrics.get("binding_probability")),
+                note="Predicted target engagement",
+            ),
+            _domain_entry(
+                domain_id="admet",
+                label="ADMET",
+                score=admet_score,
+                display_value=_format_report_value(admet_score_raw),
+                note="Developability and safety screen",
+            ),
+            _domain_entry(
+                domain_id="potency",
+                label="Potency",
+                score=potency_score,
+                display_value=potency_display,
+                note=potency_note,
+            ),
+            _domain_entry(
+                domain_id="evidence",
+                label="Evidence",
+                score=evidence_score,
+                display_value=f"{_evidence_signal_count(candidate)} signals",
+                note="Coverage across metrics, assessment, and provenance",
+            ),
+        ],
+        "strengths": strengths,
+        "concerns": concerns,
+    }
+
+
+def _domain_entry(
+    *,
+    domain_id: str,
+    label: str,
+    score: float | None,
+    display_value: str,
+    note: str,
+) -> dict[str, Any]:
+    return {
+        "id": domain_id,
+        "label": label,
+        "score": None if score is None else round(score, 2),
+        "grade": _grade_from_score(score),
+        "display_value": display_value,
+        "note": note,
+    }
+
+
+def _percent_score(value: float | None) -> float | None:
+    if value is None:
+        return None
+    normalized = value
+    if 0.0 <= normalized <= 1.0:
+        normalized *= 100.0
+    return round(max(0.0, min(normalized, 100.0)), 2)
+
+
+def _potency_report(
+    metrics: Mapping[str, float | None],
+) -> tuple[float | None, str, str]:
+    components: list[float] = []
+
+    ic50 = metrics.get("ic50")
+    kd = metrics.get("kd")
+    affinity = metrics.get("affinity")
+
+    if ic50 is not None and ic50 > 0:
+        components.append(_potency_score(ic50) * 100.0)
+    if kd is not None and kd > 0:
+        components.append(_potency_score(kd) * 100.0)
+    if affinity is not None:
+        if affinity < 0:
+            components.append(_clamp01((-affinity) / 15.0) * 100.0)
+        elif affinity > 0:
+            components.append(_clamp01(affinity / 15.0) * 55.0)
+
+    if not components:
+        return None, "-", "No IC50, KD, or affinity signal yet"
+
+    display_parts: list[str] = []
+    if ic50 is not None:
+        display_parts.append(f"IC50 {_format_report_value(ic50)}")
+    if kd is not None:
+        display_parts.append(f"KD {_format_report_value(kd)}")
+    if affinity is not None:
+        display_parts.append(f"Affinity {_format_report_value(affinity)}")
+
+    return (
+        round(sum(components) / len(components), 2),
+        ", ".join(display_parts[:2]),
+        "Best available potency or affinity readout",
+    )
+
+
+def _evidence_report_score(candidate: DrugCandidate) -> float:
+    score = 24.0
+    score += min(_evidence_signal_count(candidate) * 11.0, 44.0)
+
+    if candidate.target:
+        score += 8.0
+    if candidate.objective:
+        score += 6.0
+    if candidate.assessment:
+        score += 8.0
+    if candidate.evidence_paths:
+        score += 8.0
+
+    properties = candidate.admet.get("properties")
+    if isinstance(properties, Mapping) and properties:
+        score += 12.0
+
+    return round(max(0.0, min(score, 100.0)), 2)
+
+
+def _evidence_signal_count(candidate: DrugCandidate) -> int:
+    count = sum(1 for value in candidate.metrics.values() if value is not None)
+    if candidate.assessment:
+        count += 1
+    properties = candidate.admet.get("properties")
+    if isinstance(properties, Mapping) and properties:
+        count += 1
+    if candidate.target:
+        count += 1
+    return count
+
+
+def _grade_from_score(score: float | None) -> str:
+    if score is None:
+        return "N/A"
+    thresholds = (
+        (90.0, "A+"),
+        (82.0, "A"),
+        (74.0, "A-"),
+        (66.0, "B+"),
+        (58.0, "B"),
+        (50.0, "B-"),
+        (40.0, "C"),
+        (30.0, "D"),
+    )
+    for minimum, grade in thresholds:
+        if score >= minimum:
+            return grade
+    return "F"
+
+
+def _report_readiness(
+    *,
+    candidate: DrugCandidate,
+    binding_score: float | None,
+    admet_score: float | None,
+    potency_score: float | None,
+) -> dict[str, str]:
+    assessment = (candidate.assessment or "").lower()
+    if any(token in assessment for token in _HIGH_RISK_TOKENS):
+        return {"tone": "rework", "label": "Rework"}
+
+    strong_binding = binding_score is not None and binding_score >= 75.0
+    strong_admet = admet_score is not None and admet_score >= 68.0
+    viable_potency = potency_score is None or potency_score >= 62.0
+
+    if candidate.promising and candidate.score >= 76.0 and strong_binding and strong_admet and viable_potency:
+        return {"tone": "advance", "label": "Advance"}
+    if candidate.promising or candidate.score >= 50.0:
+        return {"tone": "watch", "label": "Watch"}
+    return {"tone": "rework", "label": "Rework"}
+
+
+def _readiness_decision(tone: str) -> str:
+    if tone == "advance":
+        return "Advance to wet-lab validation and capture confirmatory structure data."
+    if tone == "watch":
+        return "Keep in the ranked set, but close the remaining potency or ADMET gaps before advancing."
+    return "Rework the molecule or deprioritize until the safety and binding signals improve."
+
+
+def _report_strengths(
+    *,
+    candidate: DrugCandidate,
+    binding_score: float | None,
+    admet_score: float | None,
+    potency_score: float | None,
+    evidence_score: float,
+) -> list[str]:
+    notes: list[str] = []
+
+    if binding_score is not None and binding_score >= 75.0:
+        notes.append("Binding confidence is strong enough to support follow-up.")
+    if admet_score is not None and admet_score >= 70.0:
+        notes.append("ADMET screening clears the initial developability bar.")
+    if potency_score is not None and potency_score >= 70.0:
+        notes.append("Potency and affinity signals are competitive for an early lead.")
+
+    assessment = (candidate.assessment or "").lower()
+    if any(token in assessment for token in _FAVORABLE_TOKENS):
+        notes.append("Assessment language is favorable rather than cautionary.")
+
+    if evidence_score >= 70.0:
+        notes.append("The evidence package includes multiple orthogonal signals.")
+
+    if candidate.target:
+        notes.append(f"Target context is captured for {candidate.target}.")
+
+    if not notes and candidate.promising:
+        notes.append("Composite scoring still places this candidate in the promising set.")
+
+    return _unique_texts(notes)[:3]
+
+
+def _report_concerns(
+    *,
+    candidate: DrugCandidate,
+    binding_score: float | None,
+    admet_score: float | None,
+    potency_score: float | None,
+    evidence_score: float,
+) -> list[str]:
+    notes: list[str] = []
+    assessment = (candidate.assessment or "").lower()
+
+    if any(token in assessment for token in _HIGH_RISK_TOKENS):
+        notes.append("Assessment text flags a safety or toxicity concern.")
+
+    if binding_score is None:
+        notes.append("Binding evidence is still incomplete.")
+    elif binding_score < 60.0:
+        notes.append("Binding confidence is still borderline for advancement.")
+
+    if admet_score is None:
+        notes.append("ADMET scoring is missing and needs a full screen.")
+    elif admet_score < 60.0:
+        notes.append("ADMET score is below the desired developability range.")
+
+    if potency_score is None:
+        notes.append("Potency readouts such as IC50, KD, or affinity are not populated yet.")
+    elif potency_score < 55.0:
+        notes.append("Potency is not yet strong enough to de-risk the candidate.")
+
+    if evidence_score < 60.0:
+        notes.append("The evidence package is still thin for a confident decision.")
+
+    return _unique_texts(notes)[:3]
+
+
+def _unique_texts(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in values:
+        if item in seen:
+            continue
+        seen.add(item)
+        unique.append(item)
+    return unique
+
+
+def _format_report_value(value: Any) -> str:
+    if value is None:
+        return "-"
+    numeric = _coerce_float(value)
+    if numeric is None:
+        return str(value)
+    if abs(numeric) >= 1000 or (0 < abs(numeric) < 0.001):
+        return f"{numeric:.3e}"
+    return f"{numeric:.3f}".rstrip("0").rstrip(".")
 
 
 def _extract_candidates_from_job(job: dict[str, Any]) -> list[DrugCandidate]:

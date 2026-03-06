@@ -4,6 +4,7 @@ import { bootStudio, uniqueId } from "./helpers";
 
 test("creates trial, enrolls patient, and records outcome", async ({ page }) => {
   await bootStudio(page);
+  await page.getByRole("tab", { name: "Clinical" }).click();
 
   const trialId = uniqueId("e2e-trial");
   const patientId = uniqueId("patient");

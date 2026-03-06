@@ -7,6 +7,7 @@ test("validates plan and submits run job", async ({ page }) => {
 
   // Keep run request decoupled from command-center program linkage.
   await page.fill("#programIdInput", "");
+  await page.getByRole("tab", { name: "Campaign" }).click();
   await page.locator("#dryRunToggle").check();
   await page.click("#validatePlanButton");
   await expectResultOutputContains(page, "Plan Validation");
