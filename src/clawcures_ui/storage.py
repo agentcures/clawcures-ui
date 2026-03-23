@@ -47,6 +47,58 @@ def _clean_mapping(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in value.items()}
 
 
+def _load_progress_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return _clean_mapping(parsed)
+
+
+def _merge_recovery_error(value: Any, reason: str) -> str:
+    existing = _clean_text(value)
+    if existing is None:
+        return reason
+    if reason in existing:
+        return existing
+    return f"{existing} {reason}"
+
+
+def _build_recovered_progress_payload(
+    progress: Mapping[str, Any],
+    *,
+    status: str,
+    reason: str,
+    now: str,
+) -> dict[str, Any]:
+    payload = dict(progress)
+    previous_phase = _clean_text(payload.get("phase"))
+    if previous_phase is not None:
+        summary = f"Recovered after studio restart; previous phase was {previous_phase}."
+    elif status == "queued":
+        summary = "Recovered after studio restart before execution began."
+    else:
+        summary = "Recovered after studio restart while the job was in progress."
+
+    heartbeat_count = payload.get("heartbeat_count")
+    try:
+        payload["heartbeat_count"] = max(int(heartbeat_count), 1)
+    except (TypeError, ValueError):
+        payload["heartbeat_count"] = 1
+
+    payload["phase"] = "recovered"
+    payload["summary"] = summary
+    payload["phase_started_at"] = now
+    payload["phase_elapsed_seconds"] = 0.0
+    payload["last_heartbeat_at"] = now
+    payload["recovery_reason"] = reason
+    if previous_phase is not None:
+        payload["previous_phase"] = previous_phase
+    return payload
+
+
 def _clean_float(value: Any) -> float | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -526,6 +578,52 @@ class JobStore:
             )
             conn.commit()
             return int(cursor.rowcount)
+
+    def recover_interrupted_jobs(
+        self,
+        *,
+        reason: str = (
+            "Studio restarted; previous in-memory job execution was interrupted."
+        ),
+    ) -> int:
+        now = _utc_now_iso()
+        recovered = 0
+        with self._lock, closing(self._connect()) as conn:
+            rows = conn.execute(
+                """
+                SELECT job_id, status, progress_json, error_text
+                FROM jobs
+                WHERE status IN ('queued', 'running')
+                """
+            ).fetchall()
+            for row in rows:
+                progress_payload = _build_recovered_progress_payload(
+                    _load_progress_payload(row["progress_json"]),
+                    status=str(row["status"]),
+                    reason=reason,
+                    now=now,
+                )
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'cancelled',
+                        cancel_requested = 1,
+                        updated_at = ?,
+                        progress_json = ?,
+                        result_json = NULL,
+                        error_text = ?
+                    WHERE job_id = ?
+                    """,
+                    (
+                        now,
+                        json.dumps(progress_payload, ensure_ascii=True),
+                        _merge_recovery_error(row["error_text"], reason),
+                        row["job_id"],
+                    ),
+                )
+                recovered += 1
+            conn.commit()
+        return recovered
 
     def list_promising_drugs(self, *, limit: int = 300) -> dict[str, Any]:
         jobs = self.list_jobs(limit=limit, statuses=("completed",))

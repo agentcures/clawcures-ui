@@ -382,6 +382,50 @@ class StudioApiTest(unittest.TestCase):
 
 
 class StudioAutostartAgentTest(unittest.TestCase):
+    def test_create_server_recovers_orphaned_running_jobs_on_boot(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        config = StudioConfig(
+            host="127.0.0.1",
+            port=0,
+            data_dir=Path(tmp.name) / "data",
+            workspace_root=Path(__file__).resolve().parents[2],
+            max_workers=1,
+            autostart_agent=False,
+        )
+
+        first_server, first_app = create_server(config)
+        job = first_app.store.create_job(
+            kind="continuous_discovery_agent",
+            request={"objective": "recover orphaned controller"},
+        )
+        first_app.store.set_running(job["job_id"])
+        first_app.store.update_progress(
+            job["job_id"],
+            {
+                "phase": "executing",
+                "summary": "Cycle 1: executing 19 planned calls.",
+                "cycle_index": 1,
+                "heartbeat_count": 2,
+                "last_heartbeat_at": "2026-03-23T17:16:10.543055+00:00",
+            },
+        )
+        first_server.server_close()
+        first_app.shutdown()
+
+        second_server, second_app = create_server(config)
+        try:
+            recovered = second_app.store.get_job(job["job_id"])
+            self.assertIsNotNone(recovered)
+            assert recovered is not None
+            self.assertEqual(recovered["status"], "cancelled")
+            self.assertEqual(recovered["progress"]["phase"], "recovered")
+            self.assertEqual(recovered["progress"]["previous_phase"], "executing")
+            self.assertIn("Studio restarted", recovered["error"])
+        finally:
+            second_server.server_close()
+            second_app.shutdown()
+            tmp.cleanup()
+
     @mock.patch("clawcures_ui.app.ContinuousDiscoveryService")
     def test_create_server_starts_continuous_agent_by_default(
         self,

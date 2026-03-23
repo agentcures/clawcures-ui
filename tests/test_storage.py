@@ -181,6 +181,44 @@ class JobStoreTest(unittest.TestCase):
             self.assertEqual(deleted, 2)
             self.assertEqual(store.list_jobs(limit=10), [])
 
+    def test_recover_interrupted_jobs_cancels_active_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "studio.db")
+            queued = store.create_job(kind="campaign_run", request={"objective": "queued"})
+            running = store.create_job(
+                kind="continuous_discovery_cycle",
+                request={"objective": "running"},
+            )
+            store.set_running(running["job_id"])
+            store.update_progress(
+                running["job_id"],
+                {
+                    "phase": "retry_wait",
+                    "summary": "Cycle 3 failed. Retrying in 5.0s.",
+                    "cycle_index": 3,
+                    "heartbeat_count": 4,
+                    "last_heartbeat_at": "2026-03-23T17:16:10.543055+00:00",
+                },
+            )
+
+            recovered = store.recover_interrupted_jobs()
+            self.assertEqual(recovered, 2)
+
+            queued_row = store.get_job(queued["job_id"])
+            self.assertIsNotNone(queued_row)
+            assert queued_row is not None
+            self.assertEqual(queued_row["status"], "cancelled")
+            self.assertEqual(queued_row["progress"]["phase"], "recovered")
+
+            running_row = store.get_job(running["job_id"])
+            self.assertIsNotNone(running_row)
+            assert running_row is not None
+            self.assertEqual(running_row["status"], "cancelled")
+            self.assertTrue(running_row["cancel_requested"])
+            self.assertEqual(running_row["progress"]["phase"], "recovered")
+            self.assertEqual(running_row["progress"]["previous_phase"], "retry_wait")
+            self.assertIn("Studio restarted", running_row["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

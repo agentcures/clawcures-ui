@@ -24,6 +24,9 @@ _ALLOWED_STRUCTURE_SUFFIXES: frozenset[str] = frozenset(
 _ROLE_VIEWER = "viewer"
 _ROLE_OPERATOR = "operator"
 _ROLE_ADMIN = "admin"
+_JOB_RECOVERY_REASON = (
+    "Studio restarted; previous in-memory job execution was interrupted."
+)
 
 
 class ApiError(Exception):
@@ -55,6 +58,7 @@ class StudioApp:
         self.config = config
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
         self.store = JobStore(config.database_path)
+        self.store.recover_interrupted_jobs(reason=_JOB_RECOVERY_REASON)
         self.runner = BackgroundRunner(self.store, max_workers=config.max_workers)
         self.bridge = CampaignBridge(config.resolved_workspace_root)
         self.discovery_service: ContinuousDiscoveryService | None = None
