@@ -23,7 +23,17 @@ STATIC_TOOL_LIST = [
     "refua_admet_profile",
 ]
 
+_DEFAULT_CLAWCURES_OBJECTIVE = (
+    "Find cures for all diseases by prioritizing the highest-burden conditions and "
+    "researching the best drug design strategies for each."
+)
+
 _DEFAULT_OBJECTIVES: tuple[dict[str, str], ...] = (
+    {
+        "id": "all_disease_mission",
+        "label": "All-disease cure mission",
+        "objective": _DEFAULT_CLAWCURES_OBJECTIVE,
+    },
     {
         "id": "kras_g12d",
         "label": "KRAS G12D bootstrap",
@@ -71,11 +81,6 @@ _PRODUCT_REGISTRY: tuple[dict[str, str], ...] = (
         "module": "refua",
         "role": "Core molecular design and scoring",
     },
-)
-
-_DEFAULT_CLAWCURES_OBJECTIVE = (
-    "Find cures for all diseases by prioritizing the highest-burden conditions and "
-    "researching the best drug design strategies for each."
 )
 
 

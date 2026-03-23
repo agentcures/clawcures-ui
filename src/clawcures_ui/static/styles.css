@@ -163,6 +163,10 @@ h3 {
   backdrop-filter: blur(10px);
 }
 
+.card-main {
+  grid-column: 1 / -1;
+}
+
 .jobs-card,
 .output-card {
   grid-column: 1 / -1;

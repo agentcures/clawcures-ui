@@ -13,7 +13,7 @@
           <p class="eyebrow">Refua Platform</p>
           <h1>ClawCures UI</h1>
           <p class="intro">
-            A focused workspace for launching campaigns, checking stack health, and watching jobs finish.
+            A focused workspace for launching campaigns and watching jobs finish.
           </p>
         </div>
         <div class="topbar-actions">
@@ -21,7 +21,6 @@
             <span class="dot"></span>
             <span class="status-text">Checking...</span>
           </div>
-          <button id="refreshEcosystemButton" class="btn btn-secondary">Refresh Stack</button>
         </div>
       </header>
 
@@ -99,30 +98,6 @@
             <button id="autonomousButton" class="btn btn-secondary">Run Autonomous</button>
           </div>
         </section>
-
-        <aside class="card stack-card">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Core State</p>
-              <h2>Stack Health</h2>
-            </div>
-          </div>
-
-          <div id="ecosystemWarnings" class="notice" hidden></div>
-
-          <div class="stack-defaults">
-            <div>
-              <p class="mini-label">Default Objective</p>
-              <pre id="defaultObjectiveText" class="mini-pre">Loading...</pre>
-            </div>
-            <div>
-              <p class="mini-label">Prompt Preview</p>
-              <pre id="defaultPromptPreview" class="mini-pre">Loading...</pre>
-            </div>
-          </div>
-
-          <div id="productGrid" class="product-list"></div>
-        </aside>
 
         <section class="card jobs-card">
           <div class="section-head">

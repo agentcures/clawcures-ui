@@ -16,10 +16,8 @@ const maxCallsInput = document.getElementById("maxCallsInput");
 const skipValidateFirstToggle = document.getElementById("skipValidateFirstToggle");
 const jobStatusFilter = document.getElementById("jobStatusFilter");
 
-const productGrid = document.getElementById("productGrid");
-const ecosystemWarnings = document.getElementById("ecosystemWarnings");
-const defaultObjectiveText = document.getElementById("defaultObjectiveText");
-const defaultPromptPreview = document.getElementById("defaultPromptPreview");
+const DEFAULT_CAMPAIGN_OBJECTIVE =
+  "Find cures for all diseases by prioritizing the highest-burden conditions and researching the best drug design strategies for each.";
 
 const state = {
   selectedJobId: null,
@@ -183,60 +181,16 @@ function formatJobProgress(job) {
   return "-";
 }
 
-function renderWarnings(warnings) {
-  if (!Array.isArray(warnings) || warnings.length === 0) {
-    ecosystemWarnings.hidden = true;
-    ecosystemWarnings.textContent = "";
-    return;
-  }
-  ecosystemWarnings.hidden = false;
-  ecosystemWarnings.textContent = warnings.join("\n");
-}
-
 function statusBadge(status) {
   const normalized = String(status || "unknown");
   const badge = createElement("span", `status-pill is-${normalized}`, normalized);
   return badge;
 }
 
-function renderProductGrid(products) {
-  clearNode(productGrid);
-
-  if (!Array.isArray(products) || products.length === 0) {
-    productGrid.appendChild(createElement("div", "empty-state", "No stack metadata available."));
-    return;
-  }
-
-  for (const product of products) {
-    const health = String(product.health || "unknown");
-    const card = createElement("article", `product-card is-${health}`);
-
-    const header = createElement("div", "product-card-header");
-    const titleBlock = createElement("div");
-    titleBlock.appendChild(createElement("p", "mini-label", "Service"));
-    titleBlock.appendChild(
-      createElement("h3", "product-name", product.name || product.id || "unknown")
-    );
-    header.appendChild(titleBlock);
-    header.appendChild(statusBadge(health));
-
-    card.appendChild(header);
-    card.appendChild(createElement("p", "product-role", product.role || "No role provided."));
-    card.appendChild(createElement("p", "product-meta", `ID: ${product.id || "n/a"}`));
-    card.appendChild(createElement("p", "product-meta", `Repo: ${product.repo || "n/a"}`));
-    productGrid.appendChild(card);
-  }
-}
-
 function renderEcosystem(payload) {
   state.ecosystem = payload;
-  renderWarnings(payload.warnings || []);
-  renderProductGrid(payload.products || []);
 
   const clawcures = payload.clawcures || {};
-  defaultObjectiveText.textContent = clawcures.default_objective || "Unavailable";
-  defaultPromptPreview.textContent = clawcures.default_prompt_preview || "Unavailable";
-
   if (!objectiveInput.value.trim() && clawcures.default_objective) {
     objectiveInput.value = clawcures.default_objective;
   }
@@ -488,12 +442,6 @@ function bindKeyboardShortcuts() {
 }
 
 function bindActions() {
-  document.getElementById("refreshEcosystemButton").addEventListener("click", () =>
-    wrapAction(async () => {
-      await refreshEcosystem();
-      await refreshHealth();
-    })
-  );
   document.getElementById("loadObjectiveTemplateButton").addEventListener("click", () =>
     wrapAction(loadObjectiveTemplate)
   );
@@ -532,8 +480,7 @@ function bindActions() {
 
 function seedFallbackDefaults() {
   if (!objectiveInput.value.trim()) {
-    objectiveInput.value =
-      "Design an initial campaign against KRAS G12D with ranked candidates and clear validation milestones.";
+    objectiveInput.value = DEFAULT_CAMPAIGN_OBJECTIVE;
   }
   if (!systemPromptInput.value.trim()) {
     systemPromptInput.value = "";
