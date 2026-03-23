@@ -344,6 +344,12 @@ summary:focus-visible {
   transform: translateY(-1px);
 }
 
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+  transform: none;
+}
+
 .btn-primary {
   background: var(--accent);
   color: #f7fdff;
@@ -365,18 +371,11 @@ summary:focus-visible {
 }
 
 .drug-layout {
-  grid-template-columns: minmax(0, 0.96fr) minmax(340px, 1.04fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .drugs-list-card {
-  grid-column: 1 / 2;
-}
-
-.drug-detail-card {
-  grid-column: 2 / 3;
-  position: sticky;
-  top: 24px;
-  align-self: start;
+  grid-column: 1 / -1;
 }
 
 .filters-grid {
@@ -664,6 +663,15 @@ tbody tr.is-selected {
   line-height: 1.6;
 }
 
+.drug-card-launch {
+  margin-top: 12px;
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -702,6 +710,201 @@ tbody tr.is-selected {
   display: grid;
   gap: 18px;
   min-height: 420px;
+}
+
+.drug-report-page {
+  margin-top: 24px;
+}
+
+.drug-report-empty {
+  margin-top: 24px;
+}
+
+.report-shell {
+  display: grid;
+  gap: 24px;
+}
+
+.report-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.report-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 24px;
+  padding: 30px;
+  border: 1px solid rgba(14, 116, 144, 0.14);
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at top right, rgba(14, 116, 144, 0.16), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(166, 92, 0, 0.1), transparent 24%),
+    linear-gradient(140deg, rgba(255, 252, 248, 0.96), rgba(224, 246, 250, 0.82));
+  box-shadow: var(--shadow);
+}
+
+.report-hero-copy {
+  display: grid;
+  gap: 14px;
+}
+
+.report-title {
+  font-size: clamp(2.2rem, 4vw, 3.7rem);
+  line-height: 0.96;
+  letter-spacing: -0.05em;
+}
+
+.report-lead,
+.report-paragraph,
+.report-fact-value {
+  line-height: 1.7;
+}
+
+.report-lead {
+  max-width: 52rem;
+  font-size: 1.05rem;
+  color: rgba(23, 35, 58, 0.82);
+}
+
+.report-paragraph {
+  color: var(--muted);
+}
+
+.report-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+.report-stat {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid rgba(23, 35, 58, 0.08);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.report-stat.is-dark {
+  background: #17233a;
+  color: #f5f9ff;
+}
+
+.report-stat.is-dark .mini-label {
+  color: rgba(245, 249, 255, 0.7);
+}
+
+.report-stat.is-accent {
+  background: rgba(14, 116, 144, 0.12);
+}
+
+.report-stat.is-success {
+  background: rgba(20, 122, 76, 0.12);
+}
+
+.report-stat-value {
+  font-size: clamp(1.4rem, 3vw, 2.2rem);
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.report-main-grid,
+.report-secondary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.report-card {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 26px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.report-visual-card {
+  grid-column: span 1;
+}
+
+.report-summary-card {
+  align-content: start;
+}
+
+.complex-figure {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.complex-figure-svg {
+  width: 100%;
+  height: auto;
+  border-radius: 28px;
+}
+
+.complex-figure-caption {
+  max-width: 60rem;
+}
+
+.report-facts-grid,
+.report-entity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.report-fact,
+.report-entity-card,
+.report-evidence-item {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel-strong);
+}
+
+.report-entity-card.is-protein {
+  background:
+    linear-gradient(180deg, rgba(23, 35, 58, 0.96), rgba(35, 53, 82, 0.96)),
+    var(--panel-strong);
+  color: #f5f9ff;
+}
+
+.report-entity-card.is-protein .mini-label,
+.report-entity-card.is-protein .panel-copy {
+  color: rgba(245, 249, 255, 0.72);
+}
+
+.report-entity-card.is-ligand {
+  background:
+    linear-gradient(180deg, rgba(14, 116, 144, 0.18), rgba(255, 252, 248, 0.96)),
+    var(--panel-strong);
+}
+
+.report-evidence-list {
+  display: grid;
+  gap: 10px;
+}
+
+.report-evidence-path {
+  display: block;
+  padding: 11px 12px;
+  border-radius: 14px;
+  background: #101a2a;
+  color: #e7eef8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
 }
 
 .detail-hero {
@@ -799,18 +1002,22 @@ tbody tr.is-selected {
   }
 
   .filters-grid,
+  .report-stat-grid,
+  .report-main-grid,
+  .report-secondary-grid,
+  .report-facts-grid,
+  .report-entity-grid,
   .detail-grid,
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .drug-detail-card {
-    position: static;
+  .drugs-list-card {
     grid-column: 1 / -1;
   }
 
-  .drugs-list-card {
-    grid-column: 1 / -1;
+  .report-hero {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -829,6 +1036,11 @@ tbody tr.is-selected {
   }
 
   .filters-grid,
+  .report-stat-grid,
+  .report-main-grid,
+  .report-secondary-grid,
+  .report-facts-grid,
+  .report-entity-grid,
   .detail-grid,
   .metric-grid {
     grid-template-columns: 1fr;
@@ -851,6 +1063,7 @@ tbody tr.is-selected {
   }
 
   .drug-card-top,
+  .report-topbar,
   .detail-hero,
   .source-item-head {
     flex-direction: column;

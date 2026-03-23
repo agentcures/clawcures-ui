@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { bootStudio } from "./helpers";
 
-test("filters promising drugs and opens the information card", async ({ page }) => {
+test("filters promising drugs and opens the dedicated report page", async ({ page }) => {
   await bootStudio(page);
 
   await page.click("#promisingDrugsViewButton");
@@ -23,11 +23,19 @@ test("filters promising drugs and opens the information card", async ({ page }) 
   const candidateCard = page.locator("#drugCards .drug-card").first();
   await candidateCard.click();
 
-  await expect(page.locator("#drugDetail")).toContainText("Lumatrol");
-  await expect(page.locator("#drugDetail")).toContainText("KRAS G12D");
-  await expect(page.locator("#drugDetail")).toContainText(
+  await expect(page).toHaveURL(/#promising-drugs\/drug%3Alumatrol$/);
+  await expect(page.locator("#drugReportView")).toBeVisible();
+  await expect(page.locator("#drugReportPage")).toContainText("Lumatrol");
+  await expect(page.locator("#drugReportPage")).toContainText("KRAS G12D");
+  await expect(page.locator("#drugReportPage")).toContainText("Structure-backed complex");
+  await expect(page.locator("#drugReportPage")).toContainText(
     "ADMET profile remains favorable after cross-check."
   );
+  await expect(page.locator("#drugReportPage")).toContainText("7rpz.cif");
+
+  await page.click("#backToPromisingDrugsButton");
+  await expect(page).toHaveURL(/#promising-drugs$/);
+  await expect(page.locator("#promisingDrugsView")).toBeVisible();
 
   await page.click("#clearDrugFiltersButton");
   await page.selectOption("#drugPromisingFilter", "watchlist");

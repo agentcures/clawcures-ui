@@ -25,10 +25,18 @@ const drugPromisingFilter = document.getElementById("drugPromisingFilter");
 const drugTargetFilter = document.getElementById("drugTargetFilter");
 const drugToolFilter = document.getElementById("drugToolFilter");
 const drugCards = document.getElementById("drugCards");
-const drugDetail = document.getElementById("drugDetail");
+const openTopDrugReportButton = document.getElementById("openTopDrugReportButton");
+const drugReportPage = document.getElementById("drugReportPage");
+const drugReportEmpty = document.getElementById("drugReportEmpty");
 
 const DEFAULT_CAMPAIGN_OBJECTIVE =
   "Find cures for all diseases by prioritizing the highest-burden conditions and researching the best drug design strategies for each.";
+
+const VIEW_TAB_TARGETS = {
+  campaign: "campaign",
+  "promising-drugs": "promising-drugs",
+  "drug-report": "promising-drugs",
+};
 
 const DRUG_METRIC_LABELS = {
   binding_probability: "Binding Probability",
@@ -80,6 +88,17 @@ function createElement(tagName, className, text) {
   return node;
 }
 
+function createSvgElement(tagName, attributes = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tagName);
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value === null || value === undefined) {
+      continue;
+    }
+    node.setAttribute(key, String(value));
+  }
+  return node;
+}
+
 function pluralize(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -90,6 +109,23 @@ function truncate(text, limit = 180) {
     return value;
   }
   return `${value.slice(0, Math.max(limit - 1, 1)).trimEnd()}…`;
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.min(Math.max(value, minimum), maximum);
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function asObject(value) {
+  return typeof value === "object" && value ? value : {};
+}
+
+function asText(value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalized || null;
 }
 
 function setConnection(ok, text) {
@@ -518,9 +554,10 @@ async function doClearFinishedJobs() {
 
 function setActiveView(viewName) {
   state.activeView = viewName;
+  const activeTabTarget = VIEW_TAB_TARGETS[viewName] || viewName;
 
   for (const button of viewTabs) {
-    const isActive = button.dataset.viewTarget === viewName;
+    const isActive = button.dataset.viewTarget === activeTabTarget;
     button.classList.toggle("is-active", isActive);
     button.setAttribute("aria-pressed", String(isActive));
   }
@@ -530,6 +567,59 @@ function setActiveView(viewName) {
     panel.classList.toggle("is-active", isActive);
     panel.hidden = !isActive;
   }
+}
+
+function buildHashForRoute(viewName, drugId = null) {
+  if (viewName === "drug-report" && drugId) {
+    return `#promising-drugs/${encodeURIComponent(drugId)}`;
+  }
+  if (viewName === "promising-drugs") {
+    return "#promising-drugs";
+  }
+  return "#campaign";
+}
+
+function parseRouteFromHash() {
+  const rawHash = window.location.hash.replace(/^#/, "").trim();
+  if (!rawHash || rawHash === "campaign") {
+    return { view: "campaign", drugId: null };
+  }
+  if (rawHash === "promising-drugs") {
+    return { view: "promising-drugs", drugId: null };
+  }
+  if (rawHash.startsWith("promising-drugs/")) {
+    const rawDrugId = rawHash.slice("promising-drugs/".length);
+    return {
+      view: "drug-report",
+      drugId: rawDrugId ? decodeURIComponent(rawDrugId) : null,
+    };
+  }
+  return { view: "campaign", drugId: null };
+}
+
+function navigateToView(viewName, { drugId = null, replace = false } = {}) {
+  const nextHash = buildHashForRoute(viewName, drugId);
+  if (replace) {
+    const nextUrl = new URL(window.location.href);
+    nextUrl.hash = nextHash;
+    window.history.replaceState(null, "", nextUrl);
+    syncRouteWithLocation();
+    return;
+  }
+  if (window.location.hash === nextHash) {
+    syncRouteWithLocation();
+    return;
+  }
+  window.location.hash = nextHash;
+}
+
+function syncRouteWithLocation() {
+  const route = parseRouteFromHash();
+  if (route.view === "drug-report" && route.drugId) {
+    state.selectedDrugId = route.drugId;
+  }
+  setActiveView(route.view);
+  renderPromisingDrugs();
 }
 
 function drugSearchIndex(drug) {
@@ -582,8 +672,9 @@ function filteredPromisingDrugs() {
   });
 }
 
-function renderPromisingDrugsSummary(visibleCount) {
+function renderPromisingDrugsSummary(visibleCount, drugs = []) {
   const summary = state.promisingSummary || {};
+  const topDrug = drugs[0] || null;
   const parts = [
     `${visibleCount} shown`,
     `${summary.total_drugs || 0} tracked`,
@@ -592,21 +683,156 @@ function renderPromisingDrugsSummary(visibleCount) {
     `${summary.source_jobs_count || 0} source jobs`,
   ];
   promisingDrugsSummary.textContent = parts.join(" | ");
+
+  openTopDrugReportButton.disabled = !topDrug;
+  openTopDrugReportButton.textContent = topDrug
+    ? `Open Top Report${topDrug.name ? ` · ${topDrug.name}` : ""}`
+    : "Open Top Report";
 }
 
-function appendDetailRow(container, label, value, { mono = false } = {}) {
+function findDrugById(drugId) {
+  if (!drugId) {
+    return null;
+  }
+  return state.promisingDrugs.find((drug) => drug.drug_id === drugId) || null;
+}
+
+function inferStructureFormat(pathValue, formatValue) {
+  const explicit = asText(formatValue);
+  if (explicit) {
+    return explicit.toUpperCase();
+  }
+  const pathText = asText(pathValue);
+  if (!pathText || !pathText.includes(".")) {
+    return null;
+  }
+  return pathText.split(".").pop().toUpperCase();
+}
+
+function percentageOrNull(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return clamp(numeric > 1 ? numeric / 100 : numeric, 0, 1);
+}
+
+function shortLabel(value, limit = 22) {
+  const text = asText(value) || "Unknown";
+  return truncate(text, limit);
+}
+
+function buildDrugReportModel(drug) {
+  const toolArgs = asObject(drug.tool_args);
+  const admet = asObject(drug.admet);
+  const admetKeyMetrics = asObject(admet.key_metrics);
+  const admetProperties = asObject(admet.properties);
+
+  const rawEntities = asArray(toolArgs.entities).filter((item) => typeof item === "object" && item);
+  const proteins = rawEntities
+    .filter((entity) => String(entity.type || "").toLowerCase() === "protein")
+    .map((entity, index) => ({
+      id: asText(entity.id) || `protein-${index + 1}`,
+      name: asText(entity.name) || asText(entity.id) || drug.target || `Protein ${index + 1}`,
+      sequenceLength: asText(entity.sequence)?.length || 0,
+      inferred: false,
+    }));
+  const ligands = rawEntities
+    .filter((entity) => String(entity.type || "").toLowerCase() === "ligand")
+    .map((entity, index) => ({
+      id: asText(entity.id) || `ligand-${index + 1}`,
+      name:
+        asText(entity.name) ||
+        (index === 0 ? drug.name || drug.drug_id : `Ligand ${index + 1}`),
+      smiles: asText(entity.smiles) || drug.smiles,
+      inferred: false,
+    }));
+  const otherEntities = rawEntities
+    .filter((entity) => {
+      const normalized = String(entity.type || "").toLowerCase();
+      return normalized !== "protein" && normalized !== "ligand";
+    })
+    .map((entity, index) => ({
+      id: asText(entity.id) || `component-${index + 1}`,
+      type: asText(entity.type) || "component",
+      name: asText(entity.name) || asText(entity.id) || `Component ${index + 1}`,
+    }));
+
+  if (proteins.length === 0 && drug.target) {
+    proteins.push({
+      id: "target",
+      name: drug.target,
+      sequenceLength: 0,
+      inferred: true,
+    });
+  }
+  if (ligands.length === 0 && (drug.name || drug.smiles || drug.drug_id)) {
+    ligands.push({
+      id: "candidate",
+      name: drug.name || drug.drug_id,
+      smiles: drug.smiles || null,
+      inferred: true,
+    });
+  }
+
+  const structurePath = asText(toolArgs.structure_output_path);
+  const structureFormat = inferStructureFormat(structurePath, toolArgs.structure_output_format);
+  const bindingProbability = percentageOrNull(asObject(drug.metrics).binding_probability);
+  const admetScore = percentageOrNull(
+    asObject(drug.metrics).admet_score ?? admetKeyMetrics.admet_score
+  );
+  const hasStructureArtifact = Boolean(structurePath);
+  const complexConfidence = clamp(
+    (bindingProbability ?? 0.42) * 0.62 +
+      (admetScore ?? 0.36) * 0.18 +
+      (drug.promising ? 0.2 : 0.08),
+    0,
+    1
+  );
+  const hasComplexSignal =
+    hasStructureArtifact || drug.promising || (bindingProbability !== null && bindingProbability >= 0.55);
+  const complexStateLabel = hasStructureArtifact
+    ? "Structure-backed complex"
+    : hasComplexSignal
+      ? "Predicted bound complex"
+      : "Interaction hypothesis";
+
+  return {
+    proteins,
+    ligands,
+    otherEntities,
+    bindingProbability,
+    admetScore,
+    admet,
+    admetKeyMetrics,
+    admetProperties,
+    structurePath,
+    structureFormat,
+    hasStructureArtifact,
+    hasComplexSignal,
+    complexConfidence,
+    complexStateLabel,
+  };
+}
+
+function appendFactRow(container, label, value, { mono = false } = {}) {
   if (value === null || value === undefined || value === "") {
     return;
   }
-  const row = createElement("div", "detail-item");
+  const row = createElement("div", "report-fact");
   row.appendChild(createElement("span", "mini-label", label));
-  row.appendChild(
-    createElement("span", mono ? "detail-value detail-mono" : "detail-value", value)
-  );
+  row.appendChild(createElement("span", mono ? "report-fact-value detail-mono" : "report-fact-value", value));
   container.appendChild(row);
 }
 
-function renderMetricSection(title, metrics, { limit = null } = {}) {
+function createReportStat(label, value, tone = "") {
+  const item = createElement("div", `report-stat ${tone}`.trim());
+  item.appendChild(createElement("span", "mini-label", label));
+  item.appendChild(createElement("strong", "report-stat-value", value));
+  return item;
+}
+
+function renderMetricSection(title, metrics, { limit = null, className = "" } = {}) {
   const entries = Object.entries(metrics || {}).filter(([, value]) => {
     return value !== null && value !== undefined && String(value).trim() !== "";
   });
@@ -614,7 +840,7 @@ function renderMetricSection(title, metrics, { limit = null } = {}) {
     return null;
   }
 
-  const section = createElement("section", "detail-section");
+  const section = createElement("section", `report-card detail-section ${className}`.trim());
   section.appendChild(createElement("h3", null, title));
 
   const grid = createElement("div", "metric-grid");
@@ -629,16 +855,16 @@ function renderMetricSection(title, metrics, { limit = null } = {}) {
   return section;
 }
 
-function renderSourceList(sources) {
+function renderSourceList(sources, { title = "Evidence Timeline" } = {}) {
   if (!Array.isArray(sources) || sources.length === 0) {
     return null;
   }
 
-  const section = createElement("section", "detail-section");
-  section.appendChild(createElement("h3", null, "Recent Observations"));
+  const section = createElement("section", "report-card detail-section");
+  section.appendChild(createElement("h3", null, title));
 
   const list = createElement("div", "source-list");
-  for (const source of sources.slice(0, 5)) {
+  for (const source of sources.slice(0, 6)) {
     const item = createElement("article", "source-item");
     const header = createElement("div", "source-item-head");
     const headerCopy = createElement("div");
@@ -664,7 +890,7 @@ function renderSourceList(sources) {
       item.appendChild(createElement("p", "source-meta", metaParts.join(" · ")));
     }
     if (source.objective) {
-      item.appendChild(createElement("p", "source-copy", truncate(source.objective, 140)));
+      item.appendChild(createElement("p", "source-copy", truncate(source.objective, 150)));
     }
     list.appendChild(item);
   }
@@ -673,103 +899,441 @@ function renderSourceList(sources) {
   return section;
 }
 
-function renderDrugDetail(drug) {
-  clearNode(drugDetail);
+function renderEvidencePaths(evidencePaths) {
+  const entries = Object.entries(asObject(evidencePaths));
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const section = createElement("section", "report-card detail-section");
+  section.appendChild(createElement("h3", null, "Evidence Provenance"));
+
+  const list = createElement("div", "report-evidence-list");
+  for (const [key, value] of entries.slice(0, 8)) {
+    const item = createElement("div", "report-evidence-item");
+    item.appendChild(createElement("span", "mini-label", metricLabel(key)));
+    item.appendChild(createElement("code", "report-evidence-path", String(value)));
+    list.appendChild(item);
+  }
+  section.appendChild(list);
+  return section;
+}
+
+function renderEntityCards(report) {
+  const grid = createElement("div", "report-entity-grid");
+  for (const protein of report.proteins) {
+    const card = createElement("article", "report-entity-card is-protein");
+    card.appendChild(createElement("span", "mini-label", protein.inferred ? "Protein · inferred" : "Protein"));
+    card.appendChild(createElement("h3", null, protein.name));
+    if (protein.sequenceLength) {
+      card.appendChild(createElement("p", "panel-copy", `${protein.sequenceLength} aa sequence`));
+    }
+    grid.appendChild(card);
+  }
+  for (const ligand of report.ligands) {
+    const card = createElement("article", "report-entity-card is-ligand");
+    card.appendChild(createElement("span", "mini-label", ligand.inferred ? "Ligand · inferred" : "Ligand"));
+    card.appendChild(createElement("h3", null, ligand.name));
+    if (ligand.smiles) {
+      card.appendChild(createElement("p", "panel-copy detail-mono", truncate(ligand.smiles, 54)));
+    }
+    grid.appendChild(card);
+  }
+  for (const entity of report.otherEntities) {
+    const card = createElement("article", "report-entity-card");
+    card.appendChild(createElement("span", "mini-label", entity.type));
+    card.appendChild(createElement("h3", null, entity.name));
+    grid.appendChild(card);
+  }
+  return grid;
+}
+
+function renderComplexVisualization(drug, report) {
+  const figure = createElement("figure", "complex-figure");
+  const svg = createSvgElement("svg", {
+    viewBox: "0 0 860 380",
+    class: "complex-figure-svg",
+    role: "img",
+    "aria-label": `Complex visualization for ${drug.name || drug.drug_id}`,
+  });
+
+  const defs = createSvgElement("defs");
+  const coreGradient = createSvgElement("linearGradient", {
+    id: "complex-core-gradient",
+    x1: "0%",
+    y1: "0%",
+    x2: "100%",
+    y2: "100%",
+  });
+  coreGradient.appendChild(createSvgElement("stop", { offset: "0%", "stop-color": "#0e7490" }));
+  coreGradient.appendChild(createSvgElement("stop", { offset: "100%", "stop-color": "#17233a" }));
+  defs.appendChild(coreGradient);
+  svg.appendChild(defs);
+
+  svg.appendChild(
+    createSvgElement("rect", {
+      x: 8,
+      y: 8,
+      width: 844,
+      height: 364,
+      rx: 34,
+      fill: "#fffdf8",
+      opacity: 0.94,
+      stroke: "#d7cebf",
+    })
+  );
+
+  if (report.hasStructureArtifact) {
+    svg.appendChild(
+      createSvgElement("circle", {
+        cx: 430,
+        cy: 188,
+        r: 112,
+        fill: "rgba(14, 116, 144, 0.08)",
+        stroke: "rgba(14, 116, 144, 0.28)",
+        "stroke-width": 3,
+      })
+    );
+  }
+
+  const bridgeWidth = 2 + Math.round((report.bindingProbability ?? 0.38) * 8);
+  for (const [index, protein] of report.proteins.slice(0, 3).entries()) {
+    const y = 122 + index * 72;
+    svg.appendChild(
+      createSvgElement("path", {
+        d: `M 268 ${y + 18} C 324 ${y + 8}, 356 165, 392 188`,
+        fill: "none",
+        stroke: "rgba(23, 35, 58, 0.28)",
+        "stroke-width": bridgeWidth,
+        "stroke-linecap": "round",
+      })
+    );
+    svg.appendChild(
+      createSvgElement("rect", {
+        x: 92,
+        y,
+        width: 178,
+        height: 42,
+        rx: 21,
+        fill: "#17233a",
+      })
+    );
+    const label = createSvgElement("text", {
+      x: 181,
+      y: y + 26,
+      "text-anchor": "middle",
+      fill: "#f5f9ff",
+      "font-family": "Space Grotesk, sans-serif",
+      "font-size": 16,
+      "font-weight": 600,
+    });
+    label.textContent = shortLabel(protein.name, 18);
+    svg.appendChild(label);
+  }
+
+  for (const [index, ligand] of report.ligands.slice(0, 3).entries()) {
+    const y = 122 + index * 72;
+    svg.appendChild(
+      createSvgElement("path", {
+        d: `M 592 188 C 632 168, 644 ${y + 10}, 684 ${y + 18}`,
+        fill: "none",
+        stroke: "rgba(14, 116, 144, 0.34)",
+        "stroke-width": bridgeWidth + 1,
+        "stroke-linecap": "round",
+      })
+    );
+    svg.appendChild(
+      createSvgElement("rect", {
+        x: 590,
+        y,
+        width: 178,
+        height: 42,
+        rx: 21,
+        fill: "#0e7490",
+      })
+    );
+    const label = createSvgElement("text", {
+      x: 679,
+      y: y + 26,
+      "text-anchor": "middle",
+      fill: "#f5f9ff",
+      "font-family": "Space Grotesk, sans-serif",
+      "font-size": 16,
+      "font-weight": 600,
+    });
+    label.textContent = shortLabel(ligand.name, 18);
+    svg.appendChild(label);
+  }
+
+  svg.appendChild(
+    createSvgElement("ellipse", {
+      cx: 430,
+      cy: 188,
+      rx: 116,
+      ry: 78,
+      fill: "url(#complex-core-gradient)",
+    })
+  );
+
+  const centerLabel = createSvgElement("text", {
+    x: 430,
+    y: 178,
+    "text-anchor": "middle",
+    fill: "#f5f9ff",
+    "font-family": "IBM Plex Mono, monospace",
+    "font-size": 12,
+    "letter-spacing": 1.8,
+  });
+  centerLabel.textContent = "COMPLEX STATE";
+  svg.appendChild(centerLabel);
+
+  const centerState = createSvgElement("text", {
+    x: 430,
+    y: 208,
+    "text-anchor": "middle",
+    fill: "#f5f9ff",
+    "font-family": "Space Grotesk, sans-serif",
+    "font-size": 26,
+    "font-weight": 700,
+  });
+  centerState.textContent = report.complexStateLabel;
+  svg.appendChild(centerState);
+
+  const centerConfidence = createSvgElement("text", {
+    x: 430,
+    y: 234,
+    "text-anchor": "middle",
+    fill: "rgba(245, 249, 255, 0.82)",
+    "font-family": "Space Grotesk, sans-serif",
+    "font-size": 14,
+  });
+  centerConfidence.textContent = `confidence ${Math.round(report.complexConfidence * 100)}%`;
+  svg.appendChild(centerConfidence);
+
+  const topPill = createSvgElement("rect", {
+    x: 347,
+    y: 44,
+    width: 166,
+    height: 34,
+    rx: 17,
+    fill: "rgba(20, 122, 76, 0.12)",
+    stroke: "rgba(20, 122, 76, 0.22)",
+  });
+  svg.appendChild(topPill);
+  const topText = createSvgElement("text", {
+    x: 430,
+    y: 65,
+    "text-anchor": "middle",
+    fill: "#147a4c",
+    "font-family": "IBM Plex Mono, monospace",
+    "font-size": 12,
+    "letter-spacing": 1.2,
+  });
+  topText.textContent = report.hasStructureArtifact
+    ? `artifact ${report.structureFormat || "ready"}`
+    : `best score ${formatScore(drug.score)}`;
+  svg.appendChild(topText);
+
+  const bottomText = createSvgElement("text", {
+    x: 430,
+    y: 332,
+    "text-anchor": "middle",
+    fill: "#60708a",
+    "font-family": "Space Grotesk, sans-serif",
+    "font-size": 15,
+  });
+  bottomText.textContent = `${pluralize(report.proteins.length, "protein")} · ${pluralize(report.ligands.length, "ligand")} · ${pluralize(drug.source_jobs_count || 0, "source job")}`;
+  svg.appendChild(bottomText);
+
+  figure.appendChild(svg);
+  figure.appendChild(
+    createElement(
+      "figcaption",
+      "panel-copy complex-figure-caption",
+      report.hasStructureArtifact
+        ? "A stored structure artifact is attached to this candidate. The diagram centers the inferred binding core and all captured entities."
+        : "No structure artifact was stored for this candidate, so the report renders an interaction map from the best available target, ligand, and scoring evidence."
+    )
+  );
+  return figure;
+}
+
+function renderDrugReportPage(drug) {
+  clearNode(drugReportPage);
 
   if (!drug) {
-    drugDetail.appendChild(
-      createElement(
-        "div",
-        "empty-state",
-        "Select a therapeutic to inspect its evidence, source jobs, and key metrics."
-      )
-    );
+    drugReportPage.hidden = true;
+    drugReportEmpty.hidden = false;
     return;
   }
 
-  const hero = createElement("section", "detail-hero");
-  const heroCopy = createElement("div");
-  heroCopy.appendChild(createElement("p", "eyebrow", drug.target || "Therapeutic candidate"));
-  heroCopy.appendChild(createElement("h2", null, drug.name || drug.drug_id));
+  drugReportPage.hidden = false;
+  drugReportEmpty.hidden = true;
 
-  const subtitleParts = [];
-  if (drug.tool) {
-    subtitleParts.push(`Primary tool: ${drug.tool}`);
+  const report = buildDrugReportModel(drug);
+  const admetStatus = asText(report.admet.status);
+  const shell = createElement("div", "report-shell");
+
+  const backRow = createElement("div", "report-topbar");
+  const backButton = createElement("button", "btn btn-secondary", "Back to Library");
+  backButton.id = "backToPromisingDrugsButton";
+  backButton.type = "button";
+  backButton.addEventListener("click", () => {
+    navigateToView("promising-drugs");
+  });
+  backRow.appendChild(backButton);
+  backRow.appendChild(statusBadge(drugStatus(drug)));
+  shell.appendChild(backRow);
+
+  const hero = createElement("section", "report-hero");
+  const heroCopy = createElement("div", "report-hero-copy");
+  heroCopy.appendChild(
+    createElement(
+      "p",
+      "eyebrow",
+      report.hasStructureArtifact ? "Structure-Backed Therapeutic Report" : "Therapeutic Evidence Report"
+    )
+  );
+  heroCopy.appendChild(createElement("h2", "report-title", drug.name || drug.drug_id));
+  heroCopy.appendChild(
+    createElement(
+      "p",
+      "report-lead",
+      drug.assessment ||
+        `${drug.name || drug.drug_id} is currently ${drug.promising ? "ranked as promising" : "tracked as a watchlist candidate"} for ${drug.target || "its selected target"}.`
+    )
+  );
+
+  const heroMeta = createElement("div", "chip-row");
+  heroMeta.appendChild(metricChip(drug.target || "Target unspecified", "is-accent"));
+  heroMeta.appendChild(metricChip(`Primary tool ${drug.tool || "unknown"}`));
+  heroMeta.appendChild(metricChip(`Latest ${formatDate(drug.latest_seen_at)}`));
+  if (admetStatus) {
+    heroMeta.appendChild(metricChip(`ADMET ${admetStatus}`, admetStatus === "favorable" ? "is-success" : "is-accent"));
   }
-  subtitleParts.push(`Best score: ${formatScore(drug.score)}`);
-  subtitleParts.push(`Latest seen: ${formatDate(drug.latest_seen_at)}`);
-  heroCopy.appendChild(createElement("p", "panel-copy", subtitleParts.join(" · ")));
-
+  heroCopy.appendChild(heroMeta);
   hero.appendChild(heroCopy);
-  hero.appendChild(statusBadge(drugStatus(drug)));
-  drugDetail.appendChild(hero);
 
-  const chipRow = createElement("div", "chip-row");
-  chipRow.appendChild(metricChip(pluralize(drug.seen_count || 0, "observation")));
-  chipRow.appendChild(metricChip(pluralize(drug.source_jobs_count || 0, "job"), "is-accent"));
-  chipRow.appendChild(
-    metricChip(
-      `${drug.promising_runs || 0} promising run${Number(drug.promising_runs || 0) === 1 ? "" : "s"}`,
+  const stats = createElement("div", "report-stat-grid");
+  stats.appendChild(createReportStat("Best Score", formatScore(drug.score), "is-dark"));
+  stats.appendChild(
+    createReportStat(
+      "Binding",
+      report.bindingProbability !== null
+        ? formatMetricValue("binding_probability", report.bindingProbability)
+        : "Pending",
+      "is-accent"
+    )
+  );
+  stats.appendChild(
+    createReportStat(
+      "ADMET",
+      report.admetScore !== null ? formatMetricValue("admet_score", report.admetScore) : "Pending",
+      report.admetScore !== null && report.admetScore >= 0.65 ? "is-success" : ""
+    )
+  );
+  stats.appendChild(
+    createReportStat(
+      "Signals",
+      `${drug.promising_runs || 0}/${drug.seen_count || 0}`,
       drug.promising ? "is-success" : ""
     )
   );
-  if (Array.isArray(drug.tools)) {
-    for (const tool of drug.tools.slice(0, 3)) {
-      chipRow.appendChild(metricChip(tool));
-    }
+  hero.appendChild(stats);
+  shell.appendChild(hero);
+
+  const mainGrid = createElement("div", "report-main-grid");
+
+  const visualCard = createElement("section", "report-card report-visual-card");
+  visualCard.appendChild(createElement("h3", null, "Complex Formation"));
+  visualCard.appendChild(
+    createElement(
+      "p",
+      "panel-copy",
+      report.hasStructureArtifact
+        ? "This candidate includes a stored structure artifact, so the report elevates it as the strongest evidence of a formed complex."
+        : "This page synthesizes the captured target, ligand, and scoring data into a direct interaction visualization."
+    )
+  );
+  visualCard.appendChild(renderComplexVisualization(drug, report));
+
+  const visualFacts = createElement("div", "report-facts-grid");
+  appendFactRow(visualFacts, "Drug ID", drug.drug_id, { mono: true });
+  appendFactRow(visualFacts, "Target", drug.target);
+  appendFactRow(visualFacts, "Structure Artifact", report.structurePath, { mono: true });
+  appendFactRow(visualFacts, "Artifact Format", report.structureFormat);
+  appendFactRow(visualFacts, "SMILES", drug.smiles, { mono: true });
+  visualCard.appendChild(visualFacts);
+  visualCard.appendChild(renderEntityCards(report));
+  mainGrid.appendChild(visualCard);
+
+  const summaryCard = createElement("section", "report-card report-summary-card");
+  summaryCard.appendChild(createElement("h3", null, "Executive Readout"));
+  summaryCard.appendChild(
+    createElement(
+      "p",
+      "report-paragraph",
+      `${drug.name || drug.drug_id} has been observed across ${pluralize(drug.source_jobs_count || 0, "source job")} and ${pluralize(drug.seen_count || 0, "captured observation")}. The current report is anchored to the strongest run by score and status, then merged with the latest supporting evidence.`
+    )
+  );
+  summaryCard.appendChild(
+    createElement(
+      "p",
+      "report-paragraph",
+      report.hasStructureArtifact
+        ? `A ${report.structureFormat || "structure"} artifact is available, which upgrades this candidate from a simple scorecard to a structure-backed report page.`
+        : `No structure artifact path was retained in the candidate payload, so the visualization remains evidence-derived rather than atomistic.`
+    )
+  );
+  summaryCard.appendChild(
+    createElement(
+      "p",
+      "report-paragraph",
+      report.bindingProbability !== null
+        ? `Predicted binding probability sits at ${formatMetricValue("binding_probability", report.bindingProbability)}, while the ADMET profile reads ${report.admetScore !== null ? formatMetricValue("admet_score", report.admetScore) : "pending"}.`
+        : `The current report is being carried primarily by qualitative assessment and source provenance because no binding probability was captured in the strongest observation.`
+    )
+  );
+
+  const summaryChips = createElement("div", "chip-row");
+  summaryChips.appendChild(metricChip(report.complexStateLabel, report.hasComplexSignal ? "is-success" : "is-accent"));
+  for (const toolName of asArray(drug.tools).slice(0, 4)) {
+    summaryChips.appendChild(metricChip(toolName));
   }
-  drugDetail.appendChild(chipRow);
+  summaryCard.appendChild(summaryChips);
+  mainGrid.appendChild(summaryCard);
 
-  if (drug.assessment) {
-    drugDetail.appendChild(createElement("p", "detail-copy", drug.assessment));
+  shell.appendChild(mainGrid);
+
+  const metricsRow = createElement("div", "report-secondary-grid");
+  const metricsSection = renderMetricSection("Key Metrics", asObject(drug.metrics));
+  if (metricsSection) {
+    metricsRow.appendChild(metricsSection);
   }
-
-  const metaGrid = createElement("div", "detail-grid");
-  appendDetailRow(metaGrid, "Drug ID", drug.drug_id, { mono: true });
-  appendDetailRow(metaGrid, "Target", drug.target);
-  appendDetailRow(metaGrid, "SMILES", drug.smiles, { mono: true });
-  appendDetailRow(metaGrid, "First Seen", formatDate(drug.first_seen_at));
-  appendDetailRow(metaGrid, "Latest Seen", formatDate(drug.latest_seen_at));
-  appendDetailRow(metaGrid, "Primary Tool", drug.tool);
-  drugDetail.appendChild(metaGrid);
-
-  const metricSection = renderMetricSection("Key Metrics", drug.metrics);
-  if (metricSection) {
-    drugDetail.appendChild(metricSection);
-  }
-
-  const admetPayload = typeof drug.admet === "object" && drug.admet ? drug.admet : {};
-  const admetKeyMetrics =
-    typeof admetPayload.key_metrics === "object" && admetPayload.key_metrics
-      ? admetPayload.key_metrics
-      : {};
-  const admetProperties =
-    typeof admetPayload.properties === "object" && admetPayload.properties
-      ? admetPayload.properties
-      : {};
-
-  if (admetPayload.status) {
-    const admetStatus = createElement("div", "chip-row");
-    admetStatus.appendChild(metricChip(`ADMET ${admetPayload.status}`, "is-accent"));
-    drugDetail.appendChild(admetStatus);
-  }
-
-  const admetMetricsSection = renderMetricSection("ADMET Highlights", admetKeyMetrics);
+  const admetMetricsSection = renderMetricSection("ADMET Highlights", report.admetKeyMetrics);
   if (admetMetricsSection) {
-    drugDetail.appendChild(admetMetricsSection);
+    metricsRow.appendChild(admetMetricsSection);
   }
-
-  const admetPropertiesSection = renderMetricSection("ADMET Properties", admetProperties, {
+  const admetPropertiesSection = renderMetricSection("ADMET Properties", report.admetProperties, {
     limit: 6,
   });
   if (admetPropertiesSection) {
-    drugDetail.appendChild(admetPropertiesSection);
+    metricsRow.appendChild(admetPropertiesSection);
   }
+  shell.appendChild(metricsRow);
 
-  const sourceSection = renderSourceList(drug.sources);
+  const bottomGrid = createElement("div", "report-secondary-grid");
+  const sourceSection = renderSourceList(drug.sources, { title: "Source Runs" });
   if (sourceSection) {
-    drugDetail.appendChild(sourceSection);
+    bottomGrid.appendChild(sourceSection);
   }
+  const evidenceSection = renderEvidencePaths(drug.evidence_paths);
+  if (evidenceSection) {
+    bottomGrid.appendChild(evidenceSection);
+  }
+  shell.appendChild(bottomGrid);
+
+  drugReportPage.appendChild(shell);
 }
 
 function renderDrugCards(drugs) {
@@ -790,6 +1354,7 @@ function renderDrugCards(drugs) {
     const button = createElement("button", "drug-card");
     button.type = "button";
     button.setAttribute("aria-pressed", String(drug.drug_id === state.selectedDrugId));
+    button.setAttribute("aria-label", `Open report for ${drug.name || drug.drug_id}`);
     if (drug.drug_id === state.selectedDrugId) {
       button.classList.add("is-selected");
     }
@@ -819,6 +1384,14 @@ function renderDrugCards(drugs) {
     const assessment = drug.assessment || "No qualitative assessment captured yet.";
     button.appendChild(createElement("p", "drug-card-assessment", truncate(assessment, 160)));
 
+    button.appendChild(
+      createElement(
+        "p",
+        "drug-card-launch",
+        reportLaunchLabel(drug)
+      )
+    );
+
     const chips = createElement("div", "chip-row");
     chips.appendChild(metricChip(`${drug.source_jobs_count || 0} jobs`));
     if (drug.metrics?.binding_probability !== null && drug.metrics?.binding_probability !== undefined) {
@@ -841,22 +1414,42 @@ function renderDrugCards(drugs) {
 
     button.addEventListener("click", () => {
       state.selectedDrugId = drug.drug_id;
-      renderPromisingDrugs();
+      navigateToView("drug-report", { drugId: drug.drug_id });
     });
 
     drugCards.appendChild(button);
   }
 }
 
+function reportLaunchLabel(drug) {
+  const toolArgs = asObject(drug.tool_args);
+  return toolArgs.structure_output_path ? "Open structure-backed report" : "Open full report";
+}
+
 function renderPromisingDrugs() {
   const drugs = filteredPromisingDrugs();
-  if (!drugs.some((drug) => drug.drug_id === state.selectedDrugId)) {
+  const selectedDrug = findDrugById(state.selectedDrugId);
+  const selectedVisible = drugs.some((drug) => drug.drug_id === state.selectedDrugId);
+  const route = parseRouteFromHash();
+
+  if (!selectedDrug && state.activeView === "drug-report") {
+    if (state.promisingDrugs.length === 0) {
+      renderPromisingDrugsSummary(drugs.length, drugs);
+      renderDrugCards(drugs);
+      renderDrugReportPage(null);
+      return;
+    }
+    navigateToView("promising-drugs", { replace: true });
+    return;
+  }
+
+  if (!selectedVisible && state.activeView !== "drug-report") {
     state.selectedDrugId = drugs[0]?.drug_id || null;
   }
 
-  renderPromisingDrugsSummary(drugs.length);
+  renderPromisingDrugsSummary(drugs.length, drugs);
   renderDrugCards(drugs);
-  renderDrugDetail(drugs.find((drug) => drug.drug_id === state.selectedDrugId) || null);
+  renderDrugReportPage(route.view === "drug-report" ? selectedDrug : null);
 }
 
 async function refreshPromisingDrugs() {
@@ -944,13 +1537,21 @@ function bindActions() {
   document.getElementById("refreshPromisingDrugsButton").addEventListener("click", () =>
     wrapAction(refreshPromisingDrugs)
   );
+  openTopDrugReportButton.addEventListener("click", () => {
+    const topDrug = filteredPromisingDrugs()[0] || state.promisingDrugs[0] || null;
+    if (!topDrug) {
+      return;
+    }
+    state.selectedDrugId = topDrug.drug_id;
+    navigateToView("drug-report", { drugId: topDrug.drug_id });
+  });
   document.getElementById("clearDrugFiltersButton").addEventListener("click", () => {
     resetDrugFilters();
   });
 
   for (const button of viewTabs) {
     button.addEventListener("click", () => {
-      setActiveView(button.dataset.viewTarget || "campaign");
+      navigateToView(button.dataset.viewTarget || "campaign");
     });
   }
 
@@ -980,7 +1581,9 @@ async function init() {
   seedFallbackDefaults();
   bindActions();
   bindKeyboardShortcuts();
-  setActiveView("campaign");
+  openTopDrugReportButton.disabled = true;
+  window.addEventListener("hashchange", syncRouteWithLocation);
+  syncRouteWithLocation();
 
   await Promise.allSettled([
     refreshExamples(),

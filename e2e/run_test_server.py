@@ -27,10 +27,14 @@ def _seed_job(
     )
 
 
-def _seed_fixture(data_dir: Path) -> None:
+def _seed_fixture(data_dir: Path, workspace_root: Path) -> None:
     shutil.rmtree(data_dir, ignore_errors=True)
     data_dir.mkdir(parents=True, exist_ok=True)
     store = JobStore(data_dir / "studio.db")
+
+    structure_path = (
+        workspace_root / "code" / "refua" / "docs" / "boltzgen" / "example" / "7rpz.cif"
+    )
 
     _seed_job(
         store,
@@ -61,6 +65,25 @@ def _seed_fixture(data_dir: Path) -> None:
                         "caco2": 0.58,
                     },
                 },
+                "tool_args": {
+                    "name": "Lumatrol KRAS complex",
+                    "structure_output_path": str(structure_path),
+                    "structure_output_format": "cif",
+                    "entities": [
+                        {
+                            "type": "protein",
+                            "id": "kras_g12d",
+                            "name": "KRAS G12D",
+                            "sequence": "MTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQ",
+                        },
+                        {
+                            "type": "ligand",
+                            "id": "lumatrol",
+                            "name": "Lumatrol",
+                            "smiles": "CCN(CC)C1=CC=CC=C1",
+                        },
+                    ],
+                },
             },
             {
                 "cure_id": "drug:heliomab",
@@ -80,6 +103,21 @@ def _seed_fixture(data_dir: Path) -> None:
                     "key_metrics": {
                         "admet_score": 0.63,
                     },
+                },
+                "tool_args": {
+                    "entities": [
+                        {
+                            "type": "protein",
+                            "id": "egfr_ex20",
+                            "name": "EGFR exon 20",
+                        },
+                        {
+                            "type": "ligand",
+                            "id": "heliomab",
+                            "name": "Heliomab",
+                            "smiles": "NCCOC1=CC=CC=C1",
+                        },
+                    ],
                 },
             },
         ],
@@ -114,6 +152,25 @@ def _seed_fixture(data_dir: Path) -> None:
                         "caco2": 0.59,
                     },
                 },
+                "tool_args": {
+                    "name": "Lumatrol ADMET cross-check",
+                    "structure_output_path": str(structure_path),
+                    "structure_output_format": "cif",
+                    "entities": [
+                        {
+                            "type": "protein",
+                            "id": "kras_g12d",
+                            "name": "KRAS G12D",
+                            "sequence": "MTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQ",
+                        },
+                        {
+                            "type": "ligand",
+                            "id": "lumatrol",
+                            "name": "Lumatrol",
+                            "smiles": "CCN(CC)C1=CC=CC=C1",
+                        },
+                    ],
+                },
             }
         ],
     )
@@ -129,7 +186,8 @@ def main() -> None:
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir).resolve()
-    _seed_fixture(data_dir)
+    workspace_root = Path(args.workspace_root).resolve()
+    _seed_fixture(data_dir, workspace_root)
 
     os.execv(
         sys.executable,
@@ -144,7 +202,7 @@ def main() -> None:
             "--data-dir",
             str(data_dir),
             "--workspace-root",
-            str(Path(args.workspace_root).resolve()),
+            str(workspace_root),
             "--max-workers",
             str(args.max_workers),
         ],

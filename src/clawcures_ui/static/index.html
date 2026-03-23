@@ -188,6 +188,9 @@
                   <h2>Promising Drugs</h2>
                 </div>
                 <div class="toolbar">
+                  <button id="openTopDrugReportButton" class="btn btn-primary">
+                    Open Top Report
+                  </button>
                   <button id="refreshPromisingDrugsButton" class="btn btn-secondary">Refresh</button>
                   <button id="clearDrugFiltersButton" class="btn btn-secondary">Clear Filters</button>
                 </div>
@@ -240,16 +243,21 @@
               </div>
               <div id="drugCards" class="drug-cards"></div>
             </section>
+          </div>
+        </section>
 
-            <section class="card drug-detail-card">
-              <div class="section-head">
-                <div>
-                  <p class="eyebrow">Information Card</p>
-                  <h2>Drug Detail</h2>
-                </div>
+        <section id="drugReportView" class="view-panel" data-view-panel="drug-report" hidden>
+          <div id="drugReportPage" class="drug-report-page"></div>
+          <div id="drugReportEmpty" class="card drug-report-empty" hidden>
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Promising Drug Report</p>
+                <h2>Candidate Report</h2>
               </div>
-              <div id="drugDetail"></div>
-            </section>
+            </div>
+            <div class="empty-state">
+              Select a therapeutic from the library to open its dedicated report.
+            </div>
           </div>
         </section>
       </main>
