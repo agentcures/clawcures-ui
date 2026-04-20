@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import threading
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -123,6 +124,10 @@ class CampaignBridge:
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = workspace_root
         self._paths_ready = False
+        self._cache_lock = threading.Lock()
+        self._available_tools_cache: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+        self._planner_tool_allowlist_cache: tuple[str, ...] | None = None
+        self._clawcures_defaults_cache: tuple[dict[str, Any], tuple[str, ...]] | None = None
 
     def shutdown(self) -> None:
         return
@@ -165,6 +170,10 @@ class CampaignBridge:
             return _StaticToolAdapter(fallback_tools), str(exc)
 
     def _planner_tool_allowlist(self) -> list[str]:
+        with self._cache_lock:
+            if self._planner_tool_allowlist_cache is not None:
+                return list(self._planner_tool_allowlist_cache)
+
         allowlist = list(STATIC_TOOL_LIST)
         try:
             adapter_mod = self._import("refua_campaign.refua_mcp_adapter")
@@ -187,7 +196,10 @@ class CampaignBridge:
         if error is None and adapter is not None:
             supported = set(adapter.available_tools())
             allowlist = [name for name in allowlist if name in supported]
-        return sorted(dict.fromkeys(allowlist))
+        normalized = tuple(sorted(dict.fromkeys(allowlist)))
+        with self._cache_lock:
+            self._planner_tool_allowlist_cache = normalized
+        return list(normalized)
 
     def _read_text_file(self, path: Path) -> tuple[str | None, str | None]:
         if not path.exists():
@@ -319,6 +331,12 @@ class CampaignBridge:
         }
 
     def _clawcures_defaults(self) -> tuple[dict[str, Any], list[str]]:
+        with self._cache_lock:
+            cached = self._clawcures_defaults_cache
+        if cached is not None:
+            defaults, warnings = cached
+            return dict(defaults), list(warnings)
+
         warnings: list[str] = []
         objective = _DEFAULT_CLAWCURES_OBJECTIVE
         prompt_text = ""
@@ -350,16 +368,16 @@ class CampaignBridge:
         prompt_lines = [
             line.strip() for line in prompt_text.splitlines() if line.strip()
         ]
-        return (
-            {
-                "default_objective": objective,
-                "default_prompt_path": str(prompt_path),
-                "default_prompt_preview": "\n".join(prompt_lines[:6]),
-                "default_prompt_line_count": len(prompt_lines),
-                "tool_allowlist": self._planner_tool_allowlist(),
-            },
-            warnings,
-        )
+        defaults = {
+            "default_objective": objective,
+            "default_prompt_path": str(prompt_path),
+            "default_prompt_preview": "\n".join(prompt_lines[:6]),
+            "default_prompt_line_count": len(prompt_lines),
+            "tool_allowlist": self._planner_tool_allowlist(),
+        }
+        with self._cache_lock:
+            self._clawcures_defaults_cache = (dict(defaults), tuple(warnings))
+        return defaults, warnings
 
     def default_objective(self) -> str:
         defaults, _warnings = self._clawcures_defaults()
@@ -375,6 +393,12 @@ class CampaignBridge:
         }
 
     def available_tools(self) -> tuple[list[str], list[str]]:
+        with self._cache_lock:
+            cached = self._available_tools_cache
+        if cached is not None:
+            tool_names, warnings = cached
+            return list(tool_names), list(warnings)
+
         adapter, error = self._build_adapter()
         warnings: list[str] = []
         if error is not None:
@@ -382,8 +406,10 @@ class CampaignBridge:
                 "Falling back to static tool list because refua-mcp runtime is unavailable: "
                 f"{error}"
             )
-        tool_names = sorted(set(adapter.available_tools()) | set(STATIC_TOOL_LIST))
-        return tool_names, warnings
+        tool_names = tuple(sorted(set(adapter.available_tools()) | set(STATIC_TOOL_LIST)))
+        with self._cache_lock:
+            self._available_tools_cache = (tool_names, tuple(warnings))
+        return list(tool_names), warnings
 
     def ecosystem(self) -> dict[str, Any]:
         clawcures_defaults, warnings = self._clawcures_defaults()

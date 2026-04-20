@@ -5,7 +5,6 @@ import sqlite3
 import threading
 import uuid
 from collections.abc import Mapping
-from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -311,6 +310,11 @@ class JobStore:
         self._path = path
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._revision = 0
+        self._conn = self._connect()
+        self._status_counts_cache: tuple[int, dict[str, int]] | None = None
+        self._promising_drugs_cache: dict[int, tuple[int, dict[str, Any]]] = {}
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -319,7 +323,10 @@ class JobStore:
         return conn
 
     def _init_db(self) -> None:
-        with closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
                     job_id TEXT PRIMARY KEY,
@@ -350,6 +357,12 @@ class JobStore:
             )
             conn.execute(
                 """
+                CREATE INDEX IF NOT EXISTS idx_jobs_status_updated
+                ON jobs(status, updated_at DESC)
+                """
+            )
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_job_events_job_created
                 ON job_events(job_id, created_at DESC, event_id DESC)
                 """
@@ -366,10 +379,32 @@ class JobStore:
                 conn.execute("ALTER TABLE jobs ADD COLUMN progress_json TEXT")
             conn.commit()
 
+    def _bump_revision_locked(self) -> None:
+        self._revision += 1
+        self._status_counts_cache = None
+        self._promising_drugs_cache.clear()
+        self._condition.notify_all()
+
+    def change_token(self) -> int:
+        with self._lock:
+            return self._revision
+
+    def wait_for_change(self, last_token: int, *, timeout: float) -> int:
+        with self._condition:
+            if self._revision != last_token:
+                return self._revision
+            self._condition.wait(timeout=max(float(timeout), 0.0))
+            return self._revision
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
     def create_job(self, *, kind: str, request: dict[str, Any]) -> dict[str, Any]:
         job_id = str(uuid.uuid4())
         now = _utc_now_iso()
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             conn.execute(
                 """
                 INSERT INTO jobs(
@@ -391,10 +426,20 @@ class JobStore:
                 ),
             )
             conn.commit()
-        job = self.get_job(job_id)
-        if job is None:
-            raise RuntimeError("Failed to create job.")
-        return job
+            self._bump_revision_locked()
+        return {
+            "job_id": job_id,
+            "kind": kind,
+            "status": "queued",
+            "cancel_requested": False,
+            "created_at": now,
+            "updated_at": now,
+            "duration_ms": 0,
+            "request": dict(request),
+            "progress": None,
+            "result": None,
+            "error": None,
+        }
 
     def set_running(self, job_id: str) -> bool:
         return self._set_status(
@@ -440,7 +485,8 @@ class JobStore:
         reason: str = "Cancellation requested by user.",
     ) -> bool:
         now = _utc_now_iso()
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             cursor = conn.execute(
                 """
                 UPDATE jobs
@@ -452,10 +498,13 @@ class JobStore:
                 (now, reason, job_id),
             )
             conn.commit()
+            if cursor.rowcount > 0:
+                self._bump_revision_locked()
             return cursor.rowcount > 0
 
     def is_cancel_requested(self, job_id: str) -> bool:
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             row = conn.execute(
                 "SELECT cancel_requested FROM jobs WHERE job_id = ?",
                 (job_id,),
@@ -481,7 +530,8 @@ class JobStore:
         cancel_requested_value = (
             1 if cancel_requested else 0 if cancel_requested is not None else None
         )
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             if cancel_requested_value is None:
                 set_clause = "status = ?, updated_at = ?, result_json = ?, error_text = ?"
                 values: tuple[Any, ...] = (status, now, result_json, error)
@@ -516,6 +566,8 @@ class JobStore:
                     (*values, job_id),
                 )
             conn.commit()
+            if cursor.rowcount > 0:
+                self._bump_revision_locked()
             return cursor.rowcount > 0
 
     def update_progress(self, job_id: str, progress: dict[str, Any] | None) -> bool:
@@ -523,7 +575,8 @@ class JobStore:
             json.dumps(progress, ensure_ascii=True) if progress is not None else None
         )
         now = _utc_now_iso()
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             cursor = conn.execute(
                 """
                 UPDATE jobs
@@ -533,10 +586,13 @@ class JobStore:
                 (now, progress_json, job_id),
             )
             conn.commit()
+            if cursor.rowcount > 0:
+                self._bump_revision_locked()
             return cursor.rowcount > 0
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             row = conn.execute(
                 """
                 SELECT job_id, kind, status, created_at, updated_at,
@@ -567,7 +623,8 @@ class JobStore:
             json.dumps(detail, ensure_ascii=True) if isinstance(detail, Mapping) else None
         )
         now = _utc_now_iso()
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             cursor = conn.execute(
                 """
                 INSERT INTO job_events(
@@ -585,6 +642,7 @@ class JobStore:
             )
             conn.commit()
             event_id = int(cursor.lastrowid)
+            self._bump_revision_locked()
         return {
             "event_id": event_id,
             "job_id": normalized_job_id,
@@ -620,7 +678,8 @@ class JobStore:
         job_ids: list[str] | tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         safe_limit = min(max(int(limit), 1), 500)
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             if job_id is not None:
                 rows = conn.execute(
                     """
@@ -668,7 +727,8 @@ class JobStore:
         statuses: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         safe_limit = min(max(limit, 1), 1000)
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             if statuses:
                 placeholders = ",".join("?" for _ in statuses)
                 rows = conn.execute(
@@ -698,7 +758,8 @@ class JobStore:
     def clear_jobs(self, *, statuses: tuple[str, ...]) -> int:
         if not statuses:
             raise ValueError("statuses must not be empty")
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             placeholders = ",".join("?" for _ in statuses)
             job_rows = conn.execute(
                 f"SELECT job_id FROM jobs WHERE status IN ({placeholders})",
@@ -716,6 +777,8 @@ class JobStore:
                 tuple(statuses),
             )
             conn.commit()
+            if job_ids or cursor.rowcount > 0:
+                self._bump_revision_locked()
             return int(cursor.rowcount)
 
     def recover_interrupted_jobs(
@@ -727,7 +790,8 @@ class JobStore:
     ) -> int:
         now = _utc_now_iso()
         recovered = 0
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            conn = self._conn
             rows = conn.execute(
                 """
                 SELECT job_id, status, progress_json, error_text
@@ -762,21 +826,49 @@ class JobStore:
                 )
                 recovered += 1
             conn.commit()
+            if recovered:
+                self._bump_revision_locked()
         return recovered
 
     def list_promising_drugs(self, *, limit: int = 300) -> dict[str, Any]:
-        jobs = self.list_jobs(limit=limit, statuses=("completed",))
-        return build_promising_drug_snapshot(jobs)
+        safe_limit = min(max(limit, 1), 1000)
+        with self._lock:
+            cached = self._promising_drugs_cache.get(safe_limit)
+            if cached is not None and cached[0] == self._revision:
+                return cached[1]
+
+            conn = self._conn
+            rows = conn.execute(
+                """
+                SELECT job_id, kind, created_at, updated_at, request_json, result_json
+                FROM jobs
+                WHERE status = 'completed'
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+        jobs = [self._row_to_promising_job(row) for row in rows]
+        payload = build_promising_drug_snapshot(jobs)
+        with self._lock:
+            self._promising_drugs_cache[safe_limit] = (self._revision, payload)
+        return payload
 
     def status_counts(self) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock:
+            cached = self._status_counts_cache
+            if cached is not None and cached[0] == self._revision:
+                return dict(cached[1])
+
+            counts: dict[str, int] = {}
+            conn = self._conn
             rows = conn.execute(
                 "SELECT status, COUNT(*) AS count FROM jobs GROUP BY status"
             ).fetchall()
-        for row in rows:
-            counts[str(row["status"])] = int(row["count"])
-        return counts
+            for row in rows:
+                counts[str(row["status"])] = int(row["count"])
+            self._status_counts_cache = (self._revision, dict(counts))
+            return counts
 
     @staticmethod
     def _row_to_job(row: sqlite3.Row) -> dict[str, Any]:
@@ -802,6 +894,21 @@ class JobStore:
             "progress": progress,
             "result": result,
             "error": row["error_text"],
+        }
+
+    @staticmethod
+    def _row_to_promising_job(row: sqlite3.Row) -> dict[str, Any]:
+        request_json = row["request_json"]
+        result_json = row["result_json"]
+        request = json.loads(request_json) if isinstance(request_json, str) else {}
+        result = json.loads(result_json) if isinstance(result_json, str) else None
+        return {
+            "job_id": row["job_id"],
+            "kind": row["kind"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "request": request,
+            "result": result,
         }
 
     @staticmethod

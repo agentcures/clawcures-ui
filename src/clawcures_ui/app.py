@@ -67,6 +67,7 @@ class StudioApp:
         self.config = config
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
         self.store = JobStore(config.database_path)
+        self._static_cache: dict[str, tuple[int, bytes, str]] = {}
         self.store.recover_interrupted_jobs(reason=_JOB_RECOVERY_REASON)
         self.runner = BackgroundRunner(self.store, max_workers=config.max_workers)
         self.bridge = CampaignBridge(config.resolved_workspace_root)
@@ -156,6 +157,29 @@ class StudioApp:
         except OSError as exc:
             raise ApiError(f"Failed reading structure file: {exc}") from exc
         return data, _structure_content_type(resolved)
+
+    def load_static_asset(self, request_path: str) -> tuple[bytes, str] | None:
+        static_map = {
+            "/assets/app.js": ("app.js", "application/javascript; charset=utf-8"),
+            "/assets/styles.css": ("styles.css", "text/css; charset=utf-8"),
+            "/": ("index.html", "text/html; charset=utf-8"),
+        }
+        info = static_map.get(request_path)
+        if info is None:
+            return None
+
+        filename, content_type = info
+        file_path = self.config.static_dir / filename
+        if not file_path.exists():
+            return None
+        mtime_ns = file_path.stat().st_mtime_ns
+        cached = self._static_cache.get(request_path)
+        if cached is not None and cached[0] == mtime_ns:
+            return cached[1], cached[2]
+
+        payload = (mtime_ns, file_path.read_bytes(), content_type)
+        self._static_cache[request_path] = payload
+        return payload[1], payload[2]
 
     def get_job(self, job_id: str) -> dict[str, Any]:
         job = self.store.get_job(job_id)
@@ -370,7 +394,11 @@ def _coerce_int(value: Any, field_name: str, *, minimum: int = 0) -> int:
 def _json_response(
     handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]
 ) -> None:
-    body = json.dumps(payload, ensure_ascii=True, indent=2).encode("utf-8")
+    body = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
@@ -449,22 +477,32 @@ def _stream_job_snapshots(
     )
 
     last_payload = serialized_payload
+    last_change_token = app.store.change_token()
     last_keepalive = time.monotonic()
     while True:
-        time.sleep(_JOBS_STREAM_POLL_SECONDS)
-        next_payload = app.jobs_stream_payload(query=query)
-        next_serialized = _jobs_stream_signature(next_payload)
-        if next_serialized != last_payload:
-            _write_sse_event(
-                handler,
-                data=next_payload,
-                event="jobs",
-                event_id=str(next_payload.get("generated_at") or ""),
-                retry_ms=_SSE_RETRY_MILLISECONDS,
-            )
-            last_payload = next_serialized
-            last_keepalive = time.monotonic()
-            continue
+        keepalive_remaining = max(
+            _SSE_KEEPALIVE_SECONDS - (time.monotonic() - last_keepalive),
+            0.0,
+        )
+        current_change_token = app.store.wait_for_change(
+            last_change_token,
+            timeout=min(_JOBS_STREAM_POLL_SECONDS, keepalive_remaining),
+        )
+        if current_change_token != last_change_token:
+            next_payload = app.jobs_stream_payload(query=query)
+            next_serialized = _jobs_stream_signature(next_payload)
+            last_change_token = current_change_token
+            if next_serialized != last_payload:
+                _write_sse_event(
+                    handler,
+                    data=next_payload,
+                    event="jobs",
+                    event_id=str(next_payload.get("generated_at") or ""),
+                    retry_ms=_SSE_RETRY_MILLISECONDS,
+                )
+                last_payload = next_serialized
+                last_keepalive = time.monotonic()
+                continue
 
         if time.monotonic() - last_keepalive >= _SSE_KEEPALIVE_SECONDS:
             _write_sse_comment(handler, "keepalive")
@@ -630,21 +668,6 @@ def _authorize_request(
     return None
 
 
-def _load_static_file(static_dir: Path, request_path: str) -> tuple[bytes, str] | None:
-    static_map = {
-        "/assets/app.js": ("app.js", "application/javascript; charset=utf-8"),
-        "/assets/styles.css": ("styles.css", "text/css; charset=utf-8"),
-    }
-    info = static_map.get(request_path)
-    if info is None:
-        return None
-    filename, content_type = info
-    file_path = static_dir / filename
-    if not file_path.exists():
-        return None
-    return file_path.read_bytes(), content_type
-
-
 def create_handler(app: StudioApp):
     class StudioHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -718,7 +741,7 @@ def create_handler(app: StudioApp):
                     )
                     return
 
-                static_payload = _load_static_file(app.config.static_dir, path)
+                static_payload = app.load_static_asset(path)
                 if static_payload is not None:
                     data, content_type = static_payload
                     _text_response(
@@ -729,19 +752,20 @@ def create_handler(app: StudioApp):
                     )
                     return
 
-                index_path = app.config.static_dir / "index.html"
-                if not index_path.exists():
+                index_payload = app.load_static_asset("/")
+                if index_payload is None:
                     _json_response(
                         self,
                         HTTPStatus.NOT_FOUND,
                         {"error": "static index.html not found"},
                     )
                     return
+                index_data, index_content_type = index_payload
                 _text_response(
                     self,
                     status=HTTPStatus.OK,
-                    content_type="text/html; charset=utf-8",
-                    data=index_path.read_bytes(),
+                    content_type=index_content_type,
+                    data=index_data,
                 )
             except ApiError as exc:
                 _json_response(self, exc.status_code, {"error": exc.message})

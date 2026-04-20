@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -218,6 +220,25 @@ class JobStoreTest(unittest.TestCase):
             self.assertEqual(running_row["progress"]["phase"], "recovered")
             self.assertEqual(running_row["progress"]["previous_phase"], "retry_wait")
             self.assertIn("Studio restarted", running_row["error"])
+
+    def test_wait_for_change_unblocks_after_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "studio.db")
+            initial_token = store.change_token()
+            seen_tokens: list[int] = []
+
+            def _waiter() -> None:
+                seen_tokens.append(store.wait_for_change(initial_token, timeout=1.0))
+
+            thread = threading.Thread(target=_waiter)
+            thread.start()
+            time.sleep(0.05)
+            store.create_job(kind="campaign_run", request={"objective": "wake waiter"})
+            thread.join(timeout=2.0)
+
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(len(seen_tokens), 1)
+            self.assertGreater(seen_tokens[0], initial_token)
 
 
 if __name__ == "__main__":
