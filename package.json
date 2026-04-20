@@ -1,7 +1,7 @@
 {
   "name": "clawcures-ui-e2e",
   "private": true,
-  "version": "0.7.1",
+  "version": "0.8.1",
   "description": "Playwright E2E test suite for clawcures-ui",
   "scripts": {
     "test:e2e": "playwright test",
