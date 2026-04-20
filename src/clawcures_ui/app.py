@@ -68,6 +68,10 @@ class StudioApp:
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
         self.store = JobStore(config.database_path)
         self._static_cache: dict[str, tuple[int, bytes, str]] = {}
+        self._jobs_stream_cache: dict[
+            tuple[int, tuple[str, ...] | None],
+            tuple[int, dict[str, Any], str],
+        ] = {}
         self.store.recover_interrupted_jobs(reason=_JOB_RECOVERY_REASON)
         self.runner = BackgroundRunner(self.store, max_workers=config.max_workers)
         self.bridge = CampaignBridge(config.resolved_workspace_root)
@@ -85,6 +89,7 @@ class StudioApp:
             self.discovery_service.shutdown()
         self.runner.shutdown()
         self.bridge.shutdown()
+        self.store.shutdown()
 
     def health(self) -> dict[str, Any]:
         tools, warnings = self.bridge.available_tools()
@@ -110,7 +115,18 @@ class StudioApp:
         }
 
     def jobs_stream_payload(self, *, query: dict[str, list[str]]) -> dict[str, Any]:
-        payload = self.list_jobs(query=query)
+        limit = _parse_limit_query(query, default=100)
+        statuses = _parse_statuses_query(query)
+        cache_key = (limit, statuses)
+        change_token = self.store.change_token()
+        cached = self._jobs_stream_cache.get(cache_key)
+        if cached is not None and cached[0] == change_token:
+            return cached[1]
+
+        payload = {
+            "jobs": self.store.list_jobs(limit=limit, statuses=statuses),
+            "counts": self.store.status_counts(),
+        }
         jobs = payload.get("jobs")
         job_ids = [
             str(item.get("job_id"))
@@ -119,7 +135,28 @@ class StudioApp:
         ] if isinstance(jobs, list) else []
         payload["events"] = self.store.list_events(job_ids=job_ids, limit=120)
         payload["generated_at"] = _utc_now_iso()
+        signature = _jobs_stream_signature(payload)
+        self._jobs_stream_cache[cache_key] = (change_token, payload, signature)
         return payload
+
+    def jobs_stream_snapshot(
+        self,
+        *,
+        query: dict[str, list[str]],
+    ) -> tuple[dict[str, Any], str]:
+        limit = _parse_limit_query(query, default=100)
+        statuses = _parse_statuses_query(query)
+        cache_key = (limit, statuses)
+        change_token = self.store.change_token()
+        cached = self._jobs_stream_cache.get(cache_key)
+        if cached is not None and cached[0] == change_token:
+            return cached[1], cached[2]
+
+        payload = self.jobs_stream_payload(query=query)
+        refreshed = self._jobs_stream_cache.get(cache_key)
+        if refreshed is not None and refreshed[0] == self.store.change_token():
+            return refreshed[1], refreshed[2]
+        return payload, _jobs_stream_signature(payload)
 
     def list_promising_drugs(self, *, query: dict[str, list[str]]) -> dict[str, Any]:
         limit = _parse_limit_query(query, default=300)
@@ -465,8 +502,7 @@ def _stream_job_snapshots(
     *,
     query: dict[str, list[str]],
 ) -> None:
-    payload = app.jobs_stream_payload(query=query)
-    serialized_payload = _jobs_stream_signature(payload)
+    payload, serialized_payload = app.jobs_stream_snapshot(query=query)
     _open_sse_response(handler)
     _write_sse_event(
         handler,
@@ -489,8 +525,7 @@ def _stream_job_snapshots(
             timeout=min(_JOBS_STREAM_POLL_SECONDS, keepalive_remaining),
         )
         if current_change_token != last_change_token:
-            next_payload = app.jobs_stream_payload(query=query)
-            next_serialized = _jobs_stream_signature(next_payload)
+            next_payload, next_serialized = app.jobs_stream_snapshot(query=query)
             last_change_token = current_change_token
             if next_serialized != last_payload:
                 _write_sse_event(

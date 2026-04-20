@@ -370,6 +370,84 @@ class StudioApiTest(unittest.TestCase):
             "Cycle 7: planning the next discovery run.",
         )
 
+    def test_job_detail_flushes_buffered_events_from_callback(self) -> None:
+        job = self.app.store.create_job(kind="campaign_run", request={"objective": "events"})
+        self.app.store.set_running(job["job_id"])
+        callback = self.app.store.job_event_callback(job["job_id"])
+        callback(
+            {
+                "event_type": "tool_started",
+                "summary": "Call 1 started",
+                "detail": {"tool": "refua_validate_spec"},
+            }
+        )
+        callback(
+            {
+                "event_type": "tool_completed",
+                "summary": "Call 1 completed",
+                "detail": {"tool": "refua_validate_spec"},
+            }
+        )
+
+        detail = self._request("GET", f"/api/jobs/{job['job_id']}")
+        self.assertEqual(len(detail["events"]), 2)
+        self.assertEqual(detail["events"][0]["summary"], "Call 1 completed")
+        self.assertEqual(detail["events"][1]["summary"], "Call 1 started")
+
+    def test_jobs_endpoint_returns_latest_buffered_progress_value(self) -> None:
+        job = self.app.store.create_job(kind="continuous_discovery_cycle", request={"id": 8})
+        self.app.store.set_running(job["job_id"])
+        self.app.store.update_progress(
+            job["job_id"],
+            {
+                "phase": "planning",
+                "summary": "Cycle 8: planning.",
+                "cycle_index": 8,
+            },
+        )
+        self.app.store.update_progress(
+            job["job_id"],
+            {
+                "phase": "executing",
+                "summary": "Cycle 8: executing.",
+                "cycle_index": 8,
+            },
+        )
+
+        payload = self._request("GET", "/api/jobs?status=running")
+        matching = next(
+            item for item in payload["jobs"] if item["job_id"] == job["job_id"]
+        )
+        self.assertEqual(matching["progress"]["phase"], "executing")
+        self.assertEqual(matching["progress"]["summary"], "Cycle 8: executing.")
+
+    def test_promising_drugs_endpoint_flushes_completed_results(self) -> None:
+        job = self.app.store.create_job(
+            kind="campaign_run",
+            request={"objective": "Promising flush"},
+        )
+        self.app.store.set_running(job["job_id"])
+        self.app.store.set_completed(
+            job["job_id"],
+            {
+                "objective": "Promising flush",
+                "promising_cures": [
+                    {
+                        "cure_id": "drug:flush",
+                        "name": "FlushDrug",
+                        "target": "BRAF V600E",
+                        "tool": "refua_affinity",
+                        "score": 88.2,
+                        "promising": True,
+                    }
+                ],
+            },
+        )
+
+        payload = self._request("GET", "/api/promising-drugs?limit=20")
+        names = [item["name"] for item in payload["drugs"]]
+        self.assertIn("FlushDrug", names)
+
     def test_unknown_job_returns_404(self) -> None:
         url = f"http://{self.host}:{self.port}/api/jobs/not-a-real-job"
         request = Request(url, method="GET")

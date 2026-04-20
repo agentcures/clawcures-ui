@@ -240,6 +240,204 @@ class JobStoreTest(unittest.TestCase):
             self.assertEqual(len(seen_tokens), 1)
             self.assertGreater(seen_tokens[0], initial_token)
 
+    def test_update_progress_coalesces_pending_updates_until_flush(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "studio.db")
+            job = store.create_job(kind="continuous_discovery_cycle", request={"id": 9})
+            store.set_running(job["job_id"])
+            token_before = store.change_token()
+
+            self.assertTrue(
+                store.update_progress(
+                    job["job_id"],
+                    {
+                        "phase": "planning",
+                        "summary": "Cycle 9: planning.",
+                        "cycle_index": 9,
+                    },
+                )
+            )
+            self.assertTrue(
+                store.update_progress(
+                    job["job_id"],
+                    {
+                        "phase": "executing",
+                        "summary": "Cycle 9: executing.",
+                        "cycle_index": 9,
+                    },
+                )
+            )
+
+            self.assertEqual(store.change_token(), token_before)
+            detail = store.get_job(job["job_id"])
+            self.assertIsNotNone(detail)
+            assert detail is not None
+            self.assertEqual(detail["progress"]["phase"], "executing")
+            self.assertEqual(detail["progress"]["summary"], "Cycle 9: executing.")
+            self.assertGreater(store.change_token(), token_before)
+
+    def test_job_event_callback_batches_until_read_flush(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "studio.db")
+            job = store.create_job(kind="campaign_run", request={"objective": "events"})
+            store.set_running(job["job_id"])
+            callback = store.job_event_callback(job["job_id"])
+            token_before = store.change_token()
+
+            callback(
+                {
+                    "event_type": "tool_started",
+                    "summary": "First event",
+                    "level": "info",
+                    "detail": {"tool": "refua_validate_spec"},
+                }
+            )
+            callback(
+                {
+                    "event_type": "tool_completed",
+                    "summary": "Second event",
+                    "level": "info",
+                    "detail": {"tool": "refua_validate_spec"},
+                }
+            )
+
+            self.assertEqual(store.change_token(), token_before)
+            events = store.list_events(job_id=job["job_id"], limit=10)
+            self.assertEqual(len(events), 2)
+            self.assertEqual(events[0]["summary"], "Second event")
+            self.assertEqual(events[1]["summary"], "First event")
+            self.assertGreater(store.change_token(), token_before)
+
+    def test_shutdown_flushes_buffered_progress_and_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "studio.db")
+            job = store.create_job(kind="campaign_run", request={"objective": "flush"})
+            store.set_running(job["job_id"])
+            callback = store.job_event_callback(job["job_id"])
+
+            store.update_progress(
+                job["job_id"],
+                {
+                    "phase": "executing",
+                    "summary": "Pending progress",
+                    "cycle_index": 1,
+                },
+            )
+            callback(
+                {
+                    "event_type": "tool_completed",
+                    "summary": "Pending event",
+                    "detail": {"tool": "refua_affinity"},
+                }
+            )
+
+            store.shutdown()
+            detail = store.get_job(job["job_id"])
+            self.assertIsNotNone(detail)
+            assert detail is not None
+            self.assertEqual(detail["progress"]["summary"], "Pending progress")
+            events = store.list_events(job_id=job["job_id"], limit=10)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["summary"], "Pending event")
+
+    def test_list_jobs_cache_reused_until_revision_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "studio.db")
+            first_job = store.create_job(kind="a", request={"i": 1})
+            store.set_running(first_job["job_id"])
+            store.set_completed(first_job["job_id"], {"ok": 1})
+
+            first = store.list_jobs(limit=10)
+            second = store.list_jobs(limit=10)
+            self.assertIs(first, second)
+
+            next_job = store.create_job(kind="b", request={"i": 2})
+            store.set_running(next_job["job_id"])
+            store.set_failed(next_job["job_id"], "boom")
+
+            third = store.list_jobs(limit=10)
+            self.assertIsNot(first, third)
+
+    def test_list_events_cache_reused_until_revision_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "studio.db")
+            job = store.create_job(kind="campaign_run", request={"objective": "cache"})
+            store.set_running(job["job_id"])
+            store.record_event(job["job_id"], event_type="tool_started", summary="one")
+
+            first = store.list_events(job_id=job["job_id"], limit=10)
+            second = store.list_events(job_id=job["job_id"], limit=10)
+            self.assertIs(first, second)
+
+            store.record_event(job["job_id"], event_type="tool_completed", summary="two")
+            third = store.list_events(job_id=job["job_id"], limit=10)
+            self.assertIsNot(first, third)
+            self.assertEqual(third[0]["summary"], "two")
+
+    def test_status_counts_and_promising_drugs_cache_invalidate_on_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "studio.db")
+            first_job = store.create_job(kind="campaign_run", request={"objective": "a"})
+            store.set_running(first_job["job_id"])
+            store.set_completed(
+                first_job["job_id"],
+                {
+                    "objective": "a",
+                    "promising_cures": [
+                        {
+                            "cure_id": "drug:a",
+                            "name": "Drug A",
+                            "tool": "refua_affinity",
+                            "score": 75,
+                            "promising": True,
+                        }
+                    ],
+                },
+            )
+
+            counts_one = store.status_counts()
+            counts_two = store.status_counts()
+            self.assertEqual(counts_one, counts_two)
+
+            promising_one = store.list_promising_drugs(limit=20)
+            promising_two = store.list_promising_drugs(limit=20)
+            self.assertIs(promising_one, promising_two)
+
+            second_job = store.create_job(kind="campaign_run", request={"objective": "b"})
+            store.set_running(second_job["job_id"])
+            store.set_failed(second_job["job_id"], "boom")
+
+            counts_three = store.status_counts()
+            self.assertNotEqual(counts_one, counts_three)
+            promising_three = store.list_promising_drugs(limit=20)
+            self.assertIsNot(promising_one, promising_three)
+
+    def test_status_counts_cache_avoids_repeat_query_until_revision_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JobStore(Path(tmp) / "studio.db")
+            job = store.create_job(kind="campaign_run", request={"objective": "count"})
+            store.set_running(job["job_id"])
+            store.set_completed(job["job_id"], {"ok": True})
+
+            counts_queries = 0
+
+            def _trace(sql: str) -> None:
+                nonlocal counts_queries
+                if "SELECT status, COUNT(*) AS count FROM jobs GROUP BY status" in sql:
+                    counts_queries += 1
+
+            store._conn.set_trace_callback(_trace)
+            try:
+                store.status_counts()
+                store.status_counts()
+                self.assertEqual(counts_queries, 1)
+                extra = store.create_job(kind="campaign_run", request={"objective": "new"})
+                store.set_running(extra["job_id"])
+                store.status_counts()
+                self.assertEqual(counts_queries, 2)
+            finally:
+                store._conn.set_trace_callback(None)
+
 
 if __name__ == "__main__":
     unittest.main()

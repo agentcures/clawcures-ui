@@ -9,6 +9,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
+_WRITE_FLUSH_INTERVAL_SECONDS = 0.025
+_EVENT_BATCH_WAKE_THRESHOLD = 16
+
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -313,9 +316,28 @@ class JobStore:
         self._condition = threading.Condition(self._lock)
         self._revision = 0
         self._conn = self._connect()
+        self._async_writes_enabled = True
+        self._pending_progress: dict[str, tuple[str, str | None]] = {}
+        self._pending_events: list[tuple[str, str, str, str, str, str | None]] = []
+        self._writer_stop = threading.Event()
+        self._writer_wakeup = threading.Event()
         self._status_counts_cache: tuple[int, dict[str, int]] | None = None
         self._promising_drugs_cache: dict[int, tuple[int, dict[str, Any]]] = {}
+        self._list_jobs_cache: dict[
+            tuple[int, tuple[str, ...] | None],
+            tuple[int, list[dict[str, Any]]],
+        ] = {}
+        self._list_events_cache: dict[
+            tuple[int, str | None, tuple[str, ...] | None],
+            tuple[int, list[dict[str, Any]]],
+        ] = {}
         self._init_db()
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop,
+            name="clawcures-jobstore-writer",
+            daemon=True,
+        )
+        self._writer_thread.start()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=30.0, check_same_thread=False)
@@ -383,7 +405,67 @@ class JobStore:
         self._revision += 1
         self._status_counts_cache = None
         self._promising_drugs_cache.clear()
+        self._list_jobs_cache.clear()
+        self._list_events_cache.clear()
         self._condition.notify_all()
+
+    def _has_pending_writes_locked(self) -> bool:
+        return bool(self._pending_progress or self._pending_events)
+
+    def _flush_pending_writes_locked(self) -> bool:
+        if not self._has_pending_writes_locked():
+            return False
+
+        conn = self._conn
+        pending_progress = list(self._pending_progress.items())
+        pending_events = list(self._pending_events)
+        self._pending_progress.clear()
+        self._pending_events.clear()
+
+        wrote = False
+        if pending_progress:
+            for job_id, (updated_at, progress_json) in pending_progress:
+                cursor = conn.execute(
+                    """
+                    UPDATE jobs
+                    SET updated_at = ?, progress_json = ?
+                    WHERE job_id = ? AND status = 'running'
+                    """,
+                    (updated_at, progress_json, job_id),
+                )
+                wrote = wrote or cursor.rowcount > 0
+
+        if pending_events:
+            conn.executemany(
+                """
+                INSERT INTO job_events(
+                    job_id, created_at, event_type, level, summary, detail_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                pending_events,
+            )
+            wrote = True
+
+        conn.commit()
+        if wrote:
+            self._bump_revision_locked()
+        return wrote
+
+    def _ensure_flushed_locked(self) -> None:
+        if self._has_pending_writes_locked():
+            self._flush_pending_writes_locked()
+
+    def _writer_loop(self) -> None:
+        while not self._writer_stop.is_set():
+            self._writer_wakeup.wait(timeout=_WRITE_FLUSH_INTERVAL_SECONDS)
+            self._writer_wakeup.clear()
+            with self._lock:
+                if self._writer_stop.is_set() and not self._has_pending_writes_locked():
+                    return
+                self._flush_pending_writes_locked()
+
+        with self._lock:
+            self._flush_pending_writes_locked()
 
     def change_token(self) -> int:
         with self._lock:
@@ -396,14 +478,19 @@ class JobStore:
             self._condition.wait(timeout=max(float(timeout), 0.0))
             return self._revision
 
-    def close(self) -> None:
+    def shutdown(self) -> None:
+        self._async_writes_enabled = False
+        self._writer_stop.set()
+        self._writer_wakeup.set()
+        self._writer_thread.join(timeout=1.0)
         with self._lock:
-            self._conn.close()
+            self._flush_pending_writes_locked()
 
     def create_job(self, *, kind: str, request: dict[str, Any]) -> dict[str, Any]:
         job_id = str(uuid.uuid4())
         now = _utc_now_iso()
         with self._lock:
+            self._ensure_flushed_locked()
             conn = self._conn
             conn.execute(
                 """
@@ -486,6 +573,7 @@ class JobStore:
     ) -> bool:
         now = _utc_now_iso()
         with self._lock:
+            self._ensure_flushed_locked()
             conn = self._conn
             cursor = conn.execute(
                 """
@@ -504,6 +592,7 @@ class JobStore:
 
     def is_cancel_requested(self, job_id: str) -> bool:
         with self._lock:
+            self._ensure_flushed_locked()
             conn = self._conn
             row = conn.execute(
                 "SELECT cancel_requested FROM jobs WHERE job_id = ?",
@@ -531,6 +620,7 @@ class JobStore:
             1 if cancel_requested else 0 if cancel_requested is not None else None
         )
         with self._lock:
+            self._ensure_flushed_locked()
             conn = self._conn
             if cancel_requested_value is None:
                 set_clause = "status = ?, updated_at = ?, result_json = ?, error_text = ?"
@@ -577,21 +667,32 @@ class JobStore:
         now = _utc_now_iso()
         with self._lock:
             conn = self._conn
-            cursor = conn.execute(
-                """
-                UPDATE jobs
-                SET updated_at = ?, progress_json = ?
-                WHERE job_id = ? AND status = 'running'
-                """,
-                (now, progress_json, job_id),
-            )
-            conn.commit()
-            if cursor.rowcount > 0:
-                self._bump_revision_locked()
-            return cursor.rowcount > 0
+            row = conn.execute(
+                "SELECT 1 FROM jobs WHERE job_id = ? AND status = 'running'",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            if not self._async_writes_enabled:
+                cursor = conn.execute(
+                    """
+                    UPDATE jobs
+                    SET updated_at = ?, progress_json = ?
+                    WHERE job_id = ? AND status = 'running'
+                    """,
+                    (now, progress_json, job_id),
+                )
+                conn.commit()
+                if cursor.rowcount > 0:
+                    self._bump_revision_locked()
+                return cursor.rowcount > 0
+
+            self._pending_progress[str(job_id)] = (now, progress_json)
+            return True
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
+            self._ensure_flushed_locked()
             conn = self._conn
             row = conn.execute(
                 """
@@ -624,6 +725,7 @@ class JobStore:
         )
         now = _utc_now_iso()
         with self._lock:
+            self._ensure_flushed_locked()
             conn = self._conn
             cursor = conn.execute(
                 """
@@ -660,13 +762,50 @@ class JobStore:
             if not isinstance(event, Mapping):
                 return
             detail = event.get("detail")
-            self.record_event(
-                normalized_job_id,
-                event_type=str(event.get("event_type") or "job_event"),
-                summary=str(event.get("summary") or "job event"),
-                level=str(event.get("level") or "info"),
-                detail=_clean_mapping(detail),
+            normalized_type = _clean_text(event.get("event_type")) or "job_event"
+            normalized_summary = _clean_text(event.get("summary")) or "job event"
+            normalized_level = _clean_text(event.get("level")) or "info"
+            normalized_detail = _clean_mapping(detail)
+            detail_json = (
+                json.dumps(normalized_detail, ensure_ascii=True)
+                if normalized_detail
+                else None
             )
+            now = _utc_now_iso()
+            with self._lock:
+                if not self._async_writes_enabled:
+                    conn = self._conn
+                    conn.execute(
+                        """
+                        INSERT INTO job_events(
+                            job_id, created_at, event_type, level, summary, detail_json
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            normalized_job_id,
+                            now,
+                            normalized_type,
+                            normalized_level,
+                            normalized_summary,
+                            detail_json,
+                        ),
+                    )
+                    conn.commit()
+                    self._bump_revision_locked()
+                    return
+
+                self._pending_events.append(
+                    (
+                        normalized_job_id,
+                        now,
+                        normalized_type,
+                        normalized_level,
+                        normalized_summary,
+                        detail_json,
+                    )
+                )
+                if len(self._pending_events) >= _EVENT_BATCH_WAKE_THRESHOLD:
+                    self._writer_wakeup.set()
 
         return _callback
 
@@ -679,8 +818,23 @@ class JobStore:
     ) -> list[dict[str, Any]]:
         safe_limit = min(max(int(limit), 1), 500)
         with self._lock:
+            self._ensure_flushed_locked()
+            normalized_job_id = str(job_id).strip() if job_id is not None else None
+            normalized_job_ids = (
+                tuple(str(item).strip() for item in job_ids if str(item).strip())
+                if job_ids
+                else None
+            )
+            if normalized_job_ids is not None and not normalized_job_ids:
+                return []
+
+            cache_key = (safe_limit, normalized_job_id, normalized_job_ids)
+            cached = self._list_events_cache.get(cache_key)
+            if cached is not None and cached[0] == self._revision:
+                return cached[1]
+
             conn = self._conn
-            if job_id is not None:
+            if normalized_job_id is not None:
                 rows = conn.execute(
                     """
                     SELECT event_id, job_id, created_at, event_type, level, summary, detail_json
@@ -689,15 +843,10 @@ class JobStore:
                     ORDER BY event_id DESC
                     LIMIT ?
                     """,
-                    (job_id, safe_limit),
+                    (normalized_job_id, safe_limit),
                 ).fetchall()
-            elif job_ids:
-                normalized_ids = [
-                    str(item).strip() for item in job_ids if str(item).strip()
-                ]
-                if not normalized_ids:
-                    return []
-                placeholders = ",".join("?" for _ in normalized_ids)
+            elif normalized_job_ids:
+                placeholders = ",".join("?" for _ in normalized_job_ids)
                 rows = conn.execute(
                     f"""
                     SELECT event_id, job_id, created_at, event_type, level, summary, detail_json
@@ -706,7 +855,7 @@ class JobStore:
                     ORDER BY event_id DESC
                     LIMIT ?
                     """,
-                    (*normalized_ids, safe_limit),
+                    (*normalized_job_ids, safe_limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -718,7 +867,9 @@ class JobStore:
                     """,
                     (safe_limit,),
                 ).fetchall()
-        return [self._row_to_event(row) for row in rows]
+            payload = [self._row_to_event(row) for row in rows]
+            self._list_events_cache[cache_key] = (self._revision, payload)
+            return payload
 
     def list_jobs(
         self,
@@ -728,9 +879,18 @@ class JobStore:
     ) -> list[dict[str, Any]]:
         safe_limit = min(max(limit, 1), 1000)
         with self._lock:
+            self._ensure_flushed_locked()
+            normalized_statuses = (
+                tuple(str(item) for item in statuses) if statuses is not None else None
+            )
+            cache_key = (safe_limit, normalized_statuses)
+            cached = self._list_jobs_cache.get(cache_key)
+            if cached is not None and cached[0] == self._revision:
+                return cached[1]
+
             conn = self._conn
-            if statuses:
-                placeholders = ",".join("?" for _ in statuses)
+            if normalized_statuses:
+                placeholders = ",".join("?" for _ in normalized_statuses)
                 rows = conn.execute(
                     f"""
                     SELECT job_id, kind, status, created_at, updated_at,
@@ -740,7 +900,7 @@ class JobStore:
                     ORDER BY updated_at DESC
                     LIMIT ?
                     """,
-                    (*statuses, safe_limit),
+                    (*normalized_statuses, safe_limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -753,12 +913,15 @@ class JobStore:
                     """,
                     (safe_limit,),
                 ).fetchall()
-        return [self._row_to_job(row) for row in rows]
+            payload = [self._row_to_job(row) for row in rows]
+            self._list_jobs_cache[cache_key] = (self._revision, payload)
+            return payload
 
     def clear_jobs(self, *, statuses: tuple[str, ...]) -> int:
         if not statuses:
             raise ValueError("statuses must not be empty")
         with self._lock:
+            self._ensure_flushed_locked()
             conn = self._conn
             placeholders = ",".join("?" for _ in statuses)
             job_rows = conn.execute(
@@ -791,6 +954,7 @@ class JobStore:
         now = _utc_now_iso()
         recovered = 0
         with self._lock:
+            self._ensure_flushed_locked()
             conn = self._conn
             rows = conn.execute(
                 """
@@ -833,6 +997,7 @@ class JobStore:
     def list_promising_drugs(self, *, limit: int = 300) -> dict[str, Any]:
         safe_limit = min(max(limit, 1), 1000)
         with self._lock:
+            self._ensure_flushed_locked()
             cached = self._promising_drugs_cache.get(safe_limit)
             if cached is not None and cached[0] == self._revision:
                 return cached[1]
@@ -856,6 +1021,7 @@ class JobStore:
 
     def status_counts(self) -> dict[str, int]:
         with self._lock:
+            self._ensure_flushed_locked()
             cached = self._status_counts_cache
             if cached is not None and cached[0] == self._revision:
                 return dict(cached[1])
