@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -73,6 +76,70 @@ class CampaignBridgeTest(unittest.TestCase):
         )
         self.assertFalse(payload["approved"])
         self.assertGreaterEqual(len(payload["errors"]), 1)
+
+    def test_build_adapter_reuses_cached_instance(self) -> None:
+        bridge = CampaignBridge(self.workspace_root)
+        created: list[object] = []
+
+        class FakeAdapter:
+            def __init__(self) -> None:
+                created.append(self)
+
+            def available_tools(self) -> list[str]:
+                return ["refua_validate_spec"]
+
+        with mock.patch.object(
+            bridge,
+            "_import",
+            return_value=SimpleNamespace(
+                DEFAULT_TOOL_LIST=("refua_validate_spec",),
+                RefuaMcpAdapter=FakeAdapter,
+            ),
+        ):
+            first_adapter, first_error = bridge._build_adapter()
+            second_adapter, second_error = bridge._build_adapter()
+
+        self.assertIsNone(first_error)
+        self.assertIsNone(second_error)
+        self.assertIs(first_adapter, second_adapter)
+        self.assertEqual(len(created), 1)
+
+    def test_default_system_prompt_uses_mtime_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace_root = Path(tmp)
+            prompt_path = (
+                workspace_root
+                / "ClawCures"
+                / "src"
+                / "refua_campaign"
+                / "prompts"
+                / "default_system_prompt.txt"
+            )
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("first prompt", encoding="utf-8")
+            bridge = CampaignBridge(workspace_root)
+
+            calls: list[str] = []
+
+            def _load_system_prompt() -> str:
+                calls.append("load")
+                return prompt_path.read_text(encoding="utf-8").strip()
+
+            with mock.patch.object(
+                bridge,
+                "_import",
+                return_value=SimpleNamespace(load_system_prompt=_load_system_prompt),
+            ):
+                first = bridge._default_system_prompt()
+                second = bridge._default_system_prompt()
+                self.assertEqual(first, "first prompt")
+                self.assertEqual(second, "first prompt")
+                self.assertEqual(len(calls), 1)
+
+                prompt_path.write_text("second prompt", encoding="utf-8")
+                third = bridge._default_system_prompt()
+                self.assertEqual(third, "second prompt")
+                self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":

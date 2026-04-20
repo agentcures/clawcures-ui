@@ -125,9 +125,12 @@ class CampaignBridge:
         self._workspace_root = workspace_root
         self._paths_ready = False
         self._cache_lock = threading.Lock()
+        self._module_cache: dict[str, Any] = {}
+        self._adapter_cache: tuple[Any, str | None] | None = None
         self._available_tools_cache: tuple[tuple[str, ...], tuple[str, ...]] | None = None
         self._planner_tool_allowlist_cache: tuple[str, ...] | None = None
         self._clawcures_defaults_cache: tuple[dict[str, Any], tuple[str, ...]] | None = None
+        self._system_prompt_cache: tuple[int | None, str] | None = None
 
     def shutdown(self) -> None:
         return
@@ -153,9 +156,50 @@ class CampaignBridge:
 
     def _import(self, module_name: str) -> Any:
         self._ensure_paths()
-        return importlib.import_module(module_name)
+        with self._cache_lock:
+            cached = self._module_cache.get(module_name)
+        if cached is not None:
+            return cached
+        module = importlib.import_module(module_name)
+        with self._cache_lock:
+            self._module_cache[module_name] = module
+        return module
+
+    def _default_prompt_path(self) -> Path:
+        return (
+            self._workspace_root
+            / "ClawCures"
+            / "src"
+            / "refua_campaign"
+            / "prompts"
+            / "default_system_prompt.txt"
+        )
+
+    def _default_system_prompt(self) -> str:
+        prompt_path = self._default_prompt_path()
+        mtime_ns: int | None
+        try:
+            mtime_ns = prompt_path.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = None
+
+        with self._cache_lock:
+            cached = self._system_prompt_cache
+            if cached is not None and cached[0] == mtime_ns:
+                return cached[1]
+
+        prompts_mod = self._import("refua_campaign.prompts")
+        prompt_text = str(prompts_mod.load_system_prompt())
+        with self._cache_lock:
+            self._system_prompt_cache = (mtime_ns, prompt_text)
+        return prompt_text
 
     def _build_adapter(self) -> tuple[Any, str | None]:
+        with self._cache_lock:
+            cached = self._adapter_cache
+        if cached is not None:
+            return cached
+
         fallback_tools = list(STATIC_TOOL_LIST)
         try:
             adapter_mod = self._import("refua_campaign.refua_mcp_adapter")
@@ -165,9 +209,12 @@ class CampaignBridge:
             ):
                 fallback_tools = list(adapter_fallback)
             adapter = adapter_mod.RefuaMcpAdapter()
-            return adapter, None
+            result = (adapter, None)
         except Exception as exc:  # noqa: BLE001
-            return _StaticToolAdapter(fallback_tools), str(exc)
+            result = (_StaticToolAdapter(fallback_tools), str(exc))
+        with self._cache_lock:
+            self._adapter_cache = result
+        return result
 
     def _planner_tool_allowlist(self) -> list[str]:
         with self._cache_lock:
@@ -340,14 +387,7 @@ class CampaignBridge:
         warnings: list[str] = []
         objective = _DEFAULT_CLAWCURES_OBJECTIVE
         prompt_text = ""
-        prompt_path = (
-            self._workspace_root
-            / "ClawCures"
-            / "src"
-            / "refua_campaign"
-            / "prompts"
-            / "default_system_prompt.txt"
-        )
+        prompt_path = self._default_prompt_path()
 
         try:
             cli_mod = self._import("refua_campaign.cli")
@@ -356,8 +396,7 @@ class CampaignBridge:
             warnings.append(f"Could not import ClawCures default objective: {exc}")
 
         try:
-            prompts_mod = self._import("refua_campaign.prompts")
-            prompt_text = str(prompts_mod.load_system_prompt())
+            prompt_text = self._default_system_prompt()
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"Could not import ClawCures prompt loader: {exc}")
             prompt_text, read_error = self._read_text_file(prompt_path)
@@ -430,12 +469,11 @@ class CampaignBridge:
         if not objective_text:
             raise ValueError("objective must be a non-empty string")
 
-        prompts_mod = self._import("refua_campaign.prompts")
         orchestrator_mod = self._import("refua_campaign.orchestrator")
         openclaw_mod = self._import("refua_campaign.openclaw_client")
         config_mod = self._import("refua_campaign.config")
 
-        resolved_prompt = system_prompt or prompts_mod.load_system_prompt()
+        resolved_prompt = system_prompt or self._default_system_prompt()
         adapter, adapter_error = self._build_adapter()
         orchestrator = orchestrator_mod.CampaignOrchestrator(
             openclaw=openclaw_mod.OpenClawClient(config_mod.OpenClawConfig.from_env()),
@@ -651,8 +689,7 @@ class CampaignBridge:
         if plan is not None and not isinstance(plan, dict):
             raise ValueError("plan must be a JSON object")
 
-        prompts_mod = self._import("refua_campaign.prompts")
-        resolved_prompt = system_prompt or prompts_mod.load_system_prompt()
+        resolved_prompt = system_prompt or self._default_system_prompt()
 
         payload: dict[str, Any] = {
             "objective": objective_text,
@@ -707,7 +744,6 @@ class CampaignBridge:
         if not objective_text:
             raise ValueError("objective must be a non-empty string")
 
-        prompts_mod = self._import("refua_campaign.prompts")
         autonomy_mod = self._import("refua_campaign.autonomy")
         openclaw_mod = self._import("refua_campaign.openclaw_client")
         config_mod = self._import("refua_campaign.config")
@@ -718,7 +754,7 @@ class CampaignBridge:
             max_calls=int(max_calls),
             require_validate_first=not allow_skip_validate_first,
         )
-        resolved_prompt = system_prompt or prompts_mod.load_system_prompt()
+        resolved_prompt = system_prompt or self._default_system_prompt()
 
         if plan is not None:
             if not isinstance(plan, dict):
