@@ -7,9 +7,9 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from urllib.parse import quote
 from unittest import mock
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,8 +17,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from clawcures_ui.app import create_server
-from clawcures_ui.config import StudioConfig
+from clawcures_ui.app import create_server  # noqa: E402
+from clawcures_ui.config import StudioConfig  # noqa: E402
 
 
 class StudioApiTest(unittest.TestCase):
@@ -342,7 +342,9 @@ class StudioApiTest(unittest.TestCase):
         self.assertEqual(jobs_payload["jobs"], [])
 
     def test_jobs_endpoint_includes_live_progress_payload(self) -> None:
-        job = self.app.store.create_job(kind="continuous_discovery_cycle", request={"id": 7})
+        job = self.app.store.create_job(
+            kind="continuous_discovery_cycle", request={"id": 7}
+        )
         self.app.store.set_running(job["job_id"])
         self.app.store.update_progress(
             job["job_id"],
@@ -371,7 +373,9 @@ class StudioApiTest(unittest.TestCase):
         )
 
     def test_job_detail_flushes_buffered_events_from_callback(self) -> None:
-        job = self.app.store.create_job(kind="campaign_run", request={"objective": "events"})
+        job = self.app.store.create_job(
+            kind="campaign_run", request={"objective": "events"}
+        )
         self.app.store.set_running(job["job_id"])
         callback = self.app.store.job_event_callback(job["job_id"])
         callback(
@@ -395,7 +399,9 @@ class StudioApiTest(unittest.TestCase):
         self.assertEqual(detail["events"][1]["summary"], "Call 1 started")
 
     def test_jobs_endpoint_returns_latest_buffered_progress_value(self) -> None:
-        job = self.app.store.create_job(kind="continuous_discovery_cycle", request={"id": 8})
+        job = self.app.store.create_job(
+            kind="continuous_discovery_cycle", request={"id": 8}
+        )
         self.app.store.set_running(job["job_id"])
         self.app.store.update_progress(
             job["job_id"],

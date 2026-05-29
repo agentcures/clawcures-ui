@@ -12,7 +12,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from clawcures_ui.storage import JobStore
+from clawcures_ui.storage import JobStore  # noqa: E402
 
 
 class JobStoreTest(unittest.TestCase):
@@ -109,7 +109,9 @@ class JobStoreTest(unittest.TestCase):
             self.assertEqual(snapshot["summary"]["watchlist_count"], 1)
             self.assertEqual(snapshot["summary"]["source_jobs_count"], 2)
             self.assertEqual(snapshot["summary"]["total_observations"], 3)
-            self.assertEqual(snapshot["facets"]["targets"], ["EGFR exon 20", "KRAS G12D"])
+            self.assertEqual(
+                snapshot["facets"]["targets"], ["EGFR exon 20", "KRAS G12D"]
+            )
             self.assertEqual(
                 snapshot["facets"]["tools"],
                 ["refua_admet_profile", "refua_affinity"],
@@ -128,7 +130,9 @@ class JobStoreTest(unittest.TestCase):
             )
             self.assertEqual(first_drug["tool"], "refua_admet_profile")
             self.assertEqual(first_drug["metrics"]["admet_score"], 0.79)
-            self.assertEqual(first_drug["sources"][0]["objective"], "Cross-check Lumatrol ADMET")
+            self.assertEqual(
+                first_drug["sources"][0]["objective"], "Cross-check Lumatrol ADMET"
+            )
 
     def test_create_and_update_job(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -186,7 +190,9 @@ class JobStoreTest(unittest.TestCase):
     def test_recover_interrupted_jobs_cancels_active_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = JobStore(Path(tmp) / "studio.db")
-            queued = store.create_job(kind="campaign_run", request={"objective": "queued"})
+            queued = store.create_job(
+                kind="campaign_run", request={"objective": "queued"}
+            )
             running = store.create_job(
                 kind="continuous_discovery_cycle",
                 request={"objective": "running"},
@@ -369,15 +375,21 @@ class JobStoreTest(unittest.TestCase):
             second = store.list_events(job_id=job["job_id"], limit=10)
             self.assertIs(first, second)
 
-            store.record_event(job["job_id"], event_type="tool_completed", summary="two")
+            store.record_event(
+                job["job_id"], event_type="tool_completed", summary="two"
+            )
             third = store.list_events(job_id=job["job_id"], limit=10)
             self.assertIsNot(first, third)
             self.assertEqual(third[0]["summary"], "two")
 
-    def test_status_counts_and_promising_drugs_cache_invalidate_on_revision(self) -> None:
+    def test_status_counts_and_promising_drugs_cache_invalidate_on_revision(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = JobStore(Path(tmp) / "studio.db")
-            first_job = store.create_job(kind="campaign_run", request={"objective": "a"})
+            first_job = store.create_job(
+                kind="campaign_run", request={"objective": "a"}
+            )
             store.set_running(first_job["job_id"])
             store.set_completed(
                 first_job["job_id"],
@@ -403,7 +415,9 @@ class JobStoreTest(unittest.TestCase):
             promising_two = store.list_promising_drugs(limit=20)
             self.assertIs(promising_one, promising_two)
 
-            second_job = store.create_job(kind="campaign_run", request={"objective": "b"})
+            second_job = store.create_job(
+                kind="campaign_run", request={"objective": "b"}
+            )
             store.set_running(second_job["job_id"])
             store.set_failed(second_job["job_id"], "boom")
 
@@ -412,7 +426,9 @@ class JobStoreTest(unittest.TestCase):
             promising_three = store.list_promising_drugs(limit=20)
             self.assertIsNot(promising_one, promising_three)
 
-    def test_status_counts_cache_avoids_repeat_query_until_revision_changes(self) -> None:
+    def test_status_counts_cache_avoids_repeat_query_until_revision_changes(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = JobStore(Path(tmp) / "studio.db")
             job = store.create_job(kind="campaign_run", request={"objective": "count"})
@@ -431,7 +447,9 @@ class JobStoreTest(unittest.TestCase):
                 store.status_counts()
                 store.status_counts()
                 self.assertEqual(counts_queries, 1)
-                extra = store.create_job(kind="campaign_run", request={"objective": "new"})
+                extra = store.create_job(
+                    kind="campaign_run", request={"objective": "new"}
+                )
                 store.set_running(extra["job_id"])
                 store.status_counts()
                 self.assertEqual(counts_queries, 2)

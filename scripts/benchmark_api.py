@@ -6,8 +6,9 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,8 +16,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from clawcures_ui.app import StudioApp, create_server
-from clawcures_ui.config import StudioConfig
+from clawcures_ui.app import StudioApp, create_server  # noqa: E402
+from clawcures_ui.config import StudioConfig  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -67,7 +68,9 @@ def seed_store(app: StudioApp, *, jobs: int, events_per_job: int) -> None:
                     "cure_id": f"drug:{index}",
                     "name": f"Candidate {index}",
                     "target": "KRAS G12D" if index % 3 == 0 else "EGFR",
-                    "tool": "refua_affinity" if index % 2 == 0 else "refua_admet_profile",
+                    "tool": (
+                        "refua_affinity" if index % 2 == 0 else "refua_admet_profile"
+                    ),
                     "score": 60.0 + (index % 30),
                     "promising": index % 4 == 0,
                     "assessment": "Synthetic benchmark payload.",

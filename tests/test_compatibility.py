@@ -11,8 +11,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from clawcures_ui.cli import _resolve_tokens
-from refua_studio.app import create_server
+from clawcures_ui.cli import _resolve_tokens  # noqa: E402
+from refua_studio.app import create_server  # noqa: E402
 
 
 class CompatibilityTest(unittest.TestCase):
@@ -33,7 +33,10 @@ class CompatibilityTest(unittest.TestCase):
             "clawcures-ui cannot claim Python 3.14 support while live execution depends on refua-mcp.",
         )
         self.assertFalse(
-            any(str(item).strip() == "Programming Language :: Python :: 3.14" for item in project["classifiers"]),
+            any(
+                str(item).strip() == "Programming Language :: Python :: 3.14"
+                for item in project["classifiers"]
+            ),
             "clawcures-ui classifiers must not advertise Python 3.14 support.",
         )
 
@@ -44,7 +47,9 @@ class CompatibilityTest(unittest.TestCase):
         previous = os.environ.get("REFUA_STUDIO_AUTH_TOKENS")
         os.environ["REFUA_STUDIO_AUTH_TOKENS"] = " legacy-one , legacy-two "
         try:
-            tokens = _resolve_tokens(None, env_names=("CLAWCURES_UI_AUTH_TOKENS", "REFUA_STUDIO_AUTH_TOKENS"))
+            tokens = _resolve_tokens(
+                None, env_names=("CLAWCURES_UI_AUTH_TOKENS", "REFUA_STUDIO_AUTH_TOKENS")
+            )
         finally:
             if previous is None:
                 os.environ.pop("REFUA_STUDIO_AUTH_TOKENS", None)

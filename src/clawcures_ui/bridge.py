@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib
-import json
+import importlib.util
 import sys
 import threading
 from dataclasses import asdict, is_dataclass
@@ -108,7 +108,7 @@ def _to_plain_data(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     if is_dataclass(value):
-        return asdict(value)
+        return asdict(value)  # type: ignore[arg-type]
     if isinstance(value, dict):
         return {str(key): _to_plain_data(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -127,9 +127,13 @@ class CampaignBridge:
         self._cache_lock = threading.Lock()
         self._module_cache: dict[str, Any] = {}
         self._adapter_cache: tuple[Any, str | None] | None = None
-        self._available_tools_cache: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+        self._available_tools_cache: tuple[tuple[str, ...], tuple[str, ...]] | None = (
+            None
+        )
         self._planner_tool_allowlist_cache: tuple[str, ...] | None = None
-        self._clawcures_defaults_cache: tuple[dict[str, Any], tuple[str, ...]] | None = None
+        self._clawcures_defaults_cache: (
+            tuple[dict[str, Any], tuple[str, ...]] | None
+        ) = None
         self._system_prompt_cache: tuple[int | None, str] | None = None
 
     def shutdown(self) -> None:
@@ -209,8 +213,8 @@ class CampaignBridge:
             ):
                 fallback_tools = list(adapter_fallback)
             adapter = adapter_mod.RefuaMcpAdapter()
-            result = (adapter, None)
-        except Exception as exc:  # noqa: BLE001
+            result: tuple[Any, str | None] = (adapter, None)
+        except Exception as exc:
             result = (_StaticToolAdapter(fallback_tools), str(exc))
         with self._cache_lock:
             self._adapter_cache = result
@@ -253,7 +257,7 @@ class CampaignBridge:
             return None, f"Missing file: {path}"
         try:
             return path.read_text(encoding="utf-8"), None
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return None, f"Failed reading {path}: {exc}"
 
     def _serialize_results(self, results: list[Any]) -> list[dict[str, Any]]:
@@ -279,7 +283,11 @@ class CampaignBridge:
             normalized = value.strip()
             if not normalized:
                 return None
-            return normalized if len(normalized) <= limit else f"{normalized[: limit - 1].rstrip()}..."
+            return (
+                normalized
+                if len(normalized) <= limit
+                else f"{normalized[: limit - 1].rstrip()}..."
+            )
         if isinstance(value, list):
             if not value:
                 return "0 items"
@@ -324,7 +332,11 @@ class CampaignBridge:
                 normalized = value.strip()
                 if not normalized:
                     continue
-                summary[key] = normalized if len(normalized) <= 240 else f"{normalized[:239].rstrip()}..."
+                summary[key] = (
+                    normalized
+                    if len(normalized) <= 240
+                    else f"{normalized[:239].rstrip()}..."
+                )
                 continue
             if isinstance(value, (int, float, bool)) or value is None:
                 summary[key] = value
@@ -352,7 +364,7 @@ class CampaignBridge:
             cures = cures_mod.extract_promising_cures(serialized_results)
             summary = cures_mod.summarize_promising_cures(cures)
             return cures, summary, None
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return [], None, str(exc)
 
     def _load_product_status(self, descriptor: dict[str, str]) -> dict[str, Any]:
@@ -366,7 +378,9 @@ class CampaignBridge:
             except Exception:
                 imported = False
         exists = repo_dir.exists()
-        health = "healthy" if exists and imported else "degraded" if exists else "missing"
+        health = (
+            "healthy" if exists and imported else "degraded" if exists else "missing"
+        )
         return {
             "id": descriptor["id"],
             "name": descriptor["name"],
@@ -381,8 +395,8 @@ class CampaignBridge:
         with self._cache_lock:
             cached = self._clawcures_defaults_cache
         if cached is not None:
-            defaults, warnings = cached
-            return dict(defaults), list(warnings)
+            defaults, cached_warnings = cached
+            return dict(defaults), list(cached_warnings)
 
         warnings: list[str] = []
         objective = _DEFAULT_CLAWCURES_OBJECTIVE
@@ -392,17 +406,17 @@ class CampaignBridge:
         try:
             cli_mod = self._import("refua_campaign.cli")
             objective = str(getattr(cli_mod, "DEFAULT_OBJECTIVE", objective))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             warnings.append(f"Could not import ClawCures default objective: {exc}")
 
         try:
             prompt_text = self._default_system_prompt()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             warnings.append(f"Could not import ClawCures prompt loader: {exc}")
-            prompt_text, read_error = self._read_text_file(prompt_path)
+            fallback_prompt_text, read_error = self._read_text_file(prompt_path)
             if read_error is not None:
                 warnings.append(read_error)
-                prompt_text = ""
+            prompt_text = fallback_prompt_text or ""
 
         prompt_lines = [
             line.strip() for line in prompt_text.splitlines() if line.strip()
@@ -435,8 +449,8 @@ class CampaignBridge:
         with self._cache_lock:
             cached = self._available_tools_cache
         if cached is not None:
-            tool_names, warnings = cached
-            return list(tool_names), list(warnings)
+            tool_names, cached_warnings = cached
+            return list(tool_names), list(cached_warnings)
 
         adapter, error = self._build_adapter()
         warnings: list[str] = []
@@ -445,7 +459,9 @@ class CampaignBridge:
                 "Falling back to static tool list because refua-mcp runtime is unavailable: "
                 f"{error}"
             )
-        tool_names = tuple(sorted(set(adapter.available_tools()) | set(STATIC_TOOL_LIST)))
+        tool_names = tuple(
+            sorted(set(adapter.available_tools()) | set(STATIC_TOOL_LIST))
+        )
         with self._cache_lock:
             self._available_tools_cache = (tool_names, tuple(warnings))
         return list(tool_names), warnings
@@ -527,16 +543,22 @@ class CampaignBridge:
             call_index = payload.get("call_index")
             total_calls = payload.get("total_calls")
             index_prefix = ""
-            if isinstance(call_index, int) and isinstance(total_calls, int) and total_calls > 0:
+            if (
+                isinstance(call_index, int)
+                and isinstance(total_calls, int)
+                and total_calls > 0
+            ):
                 index_prefix = f"Call {call_index}/{total_calls} "
 
+            raw_args = payload.get("args")
+            args_payload: dict[str, Any] = (
+                raw_args if isinstance(raw_args, dict) else {}
+            )
             detail: dict[str, Any] = {
                 "tool": tool,
                 "call_index": call_index,
                 "total_calls": total_calls,
-                "args": self._summarize_tool_args(
-                    payload.get("args") if isinstance(payload.get("args"), dict) else {}
-                ),
+                "args": self._summarize_tool_args(args_payload),
             }
 
             if event_type == "tool_started":
@@ -832,7 +854,7 @@ class CampaignBridge:
         if not isinstance(plan, dict):
             raise ValueError("plan must be a JSON object")
 
-        tools, warnings = self.available_tools()
+        tools, bridge_warnings = self.available_tools()
         require_validate_first = not allow_skip_validate_first
         max_calls_int = int(max_calls)
         try:
@@ -846,31 +868,33 @@ class CampaignBridge:
                 allowed_tools=tools,
                 policy=policy,
             )
-            errors = list(check.errors)
-            check_warnings = list(check.warnings)
+            policy_errors = list(check.errors)
+            policy_warnings = list(check.warnings)
             approved = bool(check.approved)
         except ModuleNotFoundError as exc:
             if exc.name and not exc.name.startswith("refua_campaign"):
                 raise
             calls = plan.get("calls")
-            errors: list[str] = []
-            check_warnings: list[str] = [
+            policy_errors = []
+            policy_warnings = [
                 (
                     "Using fallback plan validator because "
                     "refua_campaign.autonomy is unavailable."
                 )
             ]
             if not isinstance(calls, list):
-                errors.append("plan.calls must be a list")
+                policy_errors.append("plan.calls must be a list")
                 calls = []
             if len(calls) > max_calls_int:
-                errors.append(
+                policy_errors.append(
                     f"plan exceeds max_calls ({len(calls)} > {max_calls_int})"
                 )
             if require_validate_first and calls:
-                first_tool = calls[0].get("tool") if isinstance(calls[0], dict) else None
+                first_tool = (
+                    calls[0].get("tool") if isinstance(calls[0], dict) else None
+                )
                 if first_tool != "refua_validate_spec":
-                    errors.append(
+                    policy_errors.append(
                         "first call must be refua_validate_spec when "
                         "require_validate_first is enabled"
                     )
@@ -882,22 +906,22 @@ class CampaignBridge:
                 and call.get("tool") not in tools
             ]
             if unknown_tools:
-                errors.append(
+                policy_errors.append(
                     "plan contains unsupported tools: "
                     + ", ".join(sorted({str(name) for name in unknown_tools}))
                 )
-            approved = len(errors) == 0
+            approved = len(policy_errors) == 0
 
         payload: dict[str, Any] = {
             "approved": approved,
-            "errors": errors,
-            "warnings": check_warnings,
+            "errors": policy_errors,
+            "warnings": policy_warnings,
             "allowed_tools": tools,
             "policy": {
                 "max_calls": max_calls_int,
                 "require_validate_first": require_validate_first,
             },
         }
-        if warnings:
-            payload["bridge_warnings"] = warnings
+        if bridge_warnings:
+            payload["bridge_warnings"] = bridge_warnings
         return payload

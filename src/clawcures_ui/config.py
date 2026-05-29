@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 DEFAULT_DATA_DIR_NAME = ".clawcures-ui"
 LEGACY_DATA_DIR_NAME = ".refua-studio"
 

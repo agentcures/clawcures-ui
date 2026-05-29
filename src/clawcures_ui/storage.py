@@ -4,10 +4,10 @@ import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 _WRITE_FLUSH_INTERVAL_SECONDS = 0.025
 _EVENT_BATCH_WAKE_THRESHOLD = 16
@@ -78,17 +78,22 @@ def _build_recovered_progress_payload(
     payload = dict(progress)
     previous_phase = _clean_text(payload.get("phase"))
     if previous_phase is not None:
-        summary = f"Recovered after studio restart; previous phase was {previous_phase}."
+        summary = (
+            f"Recovered after studio restart; previous phase was {previous_phase}."
+        )
     elif status == "queued":
         summary = "Recovered after studio restart before execution began."
     else:
         summary = "Recovered after studio restart while the job was in progress."
 
     heartbeat_count = payload.get("heartbeat_count")
-    try:
-        payload["heartbeat_count"] = max(int(heartbeat_count), 1)
-    except (TypeError, ValueError):
+    if heartbeat_count is None:
         payload["heartbeat_count"] = 1
+    else:
+        try:
+            payload["heartbeat_count"] = max(int(heartbeat_count), 1)
+        except (TypeError, ValueError):
+            payload["heartbeat_count"] = 1
 
     payload["phase"] = "recovered"
     payload["summary"] = summary
@@ -188,7 +193,7 @@ def build_promising_drug_snapshot(jobs: list[dict[str, Any]]) -> dict[str, Any]:
                     "target": _clean_text(raw_candidate.get("target")),
                     "smiles": _clean_text(raw_candidate.get("smiles")),
                     "tool": tool,
-                    "tools": set([tool]),
+                    "tools": {tool},
                     "score": score,
                     "promising": promising,
                     "assessment": _clean_text(raw_candidate.get("assessment")),
@@ -377,18 +382,14 @@ class JobStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at DESC)"
             )
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_jobs_status_updated
                 ON jobs(status, updated_at DESC)
-                """
-            )
-            conn.execute(
-                """
+                """)
+            conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_job_events_job_created
                 ON job_events(job_id, created_at DESC, event_id DESC)
-                """
-            )
+                """)
             columns = {
                 str(row["name"])
                 for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
@@ -623,12 +624,12 @@ class JobStore:
             self._ensure_flushed_locked()
             conn = self._conn
             if cancel_requested_value is None:
-                set_clause = "status = ?, updated_at = ?, result_json = ?, error_text = ?"
+                set_clause = (
+                    "status = ?, updated_at = ?, result_json = ?, error_text = ?"
+                )
                 values: tuple[Any, ...] = (status, now, result_json, error)
             else:
-                set_clause = (
-                    "status = ?, updated_at = ?, result_json = ?, error_text = ?, cancel_requested = ?"
-                )
+                set_clause = "status = ?, updated_at = ?, result_json = ?, error_text = ?, cancel_requested = ?"
                 values = (
                     status,
                     now,
@@ -721,7 +722,9 @@ class JobStore:
         normalized_summary = _clean_text(summary) or normalized_type
         normalized_level = _clean_text(level) or "info"
         detail_json = (
-            json.dumps(detail, ensure_ascii=True) if isinstance(detail, Mapping) else None
+            json.dumps(detail, ensure_ascii=True)
+            if isinstance(detail, Mapping)
+            else None
         )
         now = _utc_now_iso()
         with self._lock:
@@ -743,6 +746,8 @@ class JobStore:
                 ),
             )
             conn.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("job event insert did not return a row id")
             event_id = int(cursor.lastrowid)
             self._bump_revision_locked()
         return {
@@ -956,13 +961,11 @@ class JobStore:
         with self._lock:
             self._ensure_flushed_locked()
             conn = self._conn
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT job_id, status, progress_json, error_text
                 FROM jobs
                 WHERE status IN ('queued', 'running')
-                """
-            ).fetchall()
+                """).fetchall()
             for row in rows:
                 progress_payload = _build_recovered_progress_payload(
                     _load_progress_payload(row["progress_json"]),
@@ -1044,9 +1047,7 @@ class JobStore:
         created_at = row["created_at"]
         updated_at = row["updated_at"]
         request = json.loads(request_json) if isinstance(request_json, str) else {}
-        progress = (
-            json.loads(progress_json) if isinstance(progress_json, str) else None
-        )
+        progress = json.loads(progress_json) if isinstance(progress_json, str) else None
         result = json.loads(result_json) if isinstance(result_json, str) else None
         return {
             "job_id": row["job_id"],

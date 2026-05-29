@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import inspect
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable
+from typing import Any
 
 from clawcures_ui.storage import JobStore
 
@@ -47,7 +48,7 @@ class BackgroundRunner:
             except JobCancelledError as exc:
                 self._store.set_cancelled(job_id, str(exc))
                 return
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._store.set_failed(job_id, str(exc))
                 return
             if cancel_event.is_set() or self._store.is_cancel_requested(job_id):

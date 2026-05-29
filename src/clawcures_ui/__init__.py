@@ -1,8 +1,8 @@
 """ClawCures UI package."""
 
+import tomllib
 from importlib.metadata import version as _distribution_version
 from pathlib import Path
-import tomllib
 
 __all__ = ["__version__"]
 
@@ -27,7 +27,7 @@ def _resolve_version() -> str:
     for distribution_name in ("clawcures-ui", "refua-studio"):
         try:
             return _distribution_version(distribution_name)
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
     raise RuntimeError("Unable to resolve package version for clawcures-ui")
 

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import UTC, datetime
 import threading
 import time
-from typing import Any, Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from typing import Any
 
 from clawcures_ui.bridge import CampaignBridge
 from clawcures_ui.storage import JobStore
@@ -106,7 +107,9 @@ class ContinuousDiscoveryService:
         controller_job = (
             self._store.get_job(controller_job_id) if controller_job_id else None
         )
-        progress = controller_job.get("progress") if isinstance(controller_job, dict) else None
+        progress = (
+            controller_job.get("progress") if isinstance(controller_job, dict) else None
+        )
         return {
             "enabled": True,
             "controller_job_id": controller_job_id,
@@ -159,7 +162,9 @@ class ContinuousDiscoveryService:
 
                     plan = plan_payload.get("plan")
                     if not isinstance(plan, dict):
-                        raise RuntimeError("Continuous discovery cycle returned an invalid plan.")
+                        raise RuntimeError(
+                            "Continuous discovery cycle returned an invalid plan."
+                        )
                     plan_calls = _plan_call_count(plan)
                     self._publish_cycle_progress(
                         cycle_job_id=cycle_job_id,
@@ -192,9 +197,11 @@ class ContinuousDiscoveryService:
                         plan_payload=plan_payload,
                         execution_payload=execution_payload,
                     )
-                    result_count = len(result.get("results", [])) if isinstance(
-                        result.get("results"), list
-                    ) else 0
+                    result_count = (
+                        len(result.get("results", []))
+                        if isinstance(result.get("results"), list)
+                        else 0
+                    )
                     promising_count = _promising_count(result)
                     self._publish_cycle_progress(
                         cycle_job_id=cycle_job_id,
@@ -230,7 +237,7 @@ class ContinuousDiscoveryService:
                     )
                     if self._stop_event.wait(self._success_delay_seconds):
                         break
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     self._publish_cycle_progress(
                         cycle_job_id=cycle_job_id,
                         phase="failed",
@@ -250,11 +257,14 @@ class ContinuousDiscoveryService:
                     if self._stop_event.wait(self._failure_delay_seconds):
                         break
                     continue
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             self._store.set_failed(controller_job_id, str(exc))
             return
 
-        if self._store.is_cancel_requested(controller_job_id) or self._stop_event.is_set():
+        if (
+            self._store.is_cancel_requested(controller_job_id)
+            or self._stop_event.is_set()
+        ):
             self._store.set_cancelled(
                 controller_job_id,
                 "Continuous discovery agent stopped.",

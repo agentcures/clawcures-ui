@@ -12,7 +12,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from clawcures_ui.bridge import CampaignBridge
+from clawcures_ui.bridge import CampaignBridge  # noqa: E402
 
 
 class CampaignBridgeTest(unittest.TestCase):

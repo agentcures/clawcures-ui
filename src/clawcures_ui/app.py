@@ -128,11 +128,15 @@ class StudioApp:
             "counts": self.store.status_counts(),
         }
         jobs = payload.get("jobs")
-        job_ids = [
-            str(item.get("job_id"))
-            for item in jobs
-            if isinstance(item, dict) and str(item.get("job_id") or "").strip()
-        ] if isinstance(jobs, list) else []
+        job_ids = (
+            [
+                str(item.get("job_id"))
+                for item in jobs
+                if isinstance(item, dict) and str(item.get("job_id") or "").strip()
+            ]
+            if isinstance(jobs, list)
+            else []
+        )
         payload["events"] = self.store.list_events(job_ids=job_ids, limit=120)
         payload["generated_at"] = _utc_now_iso()
         signature = _jobs_stream_signature(payload)
@@ -301,6 +305,7 @@ class StudioApp:
         bridge_request = dict(request_payload)
 
         if async_mode:
+
             def _run_job(*, job_id: str) -> dict[str, Any]:
                 return self.bridge.run(
                     **bridge_request,
@@ -324,6 +329,7 @@ class StudioApp:
         async_mode = bool(payload.get("async_mode", True))
 
         if async_mode:
+
             def _execute_plan_job(*, job_id: str) -> dict[str, Any]:
                 return self.bridge.execute_plan(
                     plan=plan,
@@ -491,7 +497,7 @@ def _write_sse_event(
 
 
 def _write_sse_comment(handler: BaseHTTPRequestHandler, text: str) -> None:
-    body = f": {text}\n\n".encode("utf-8")
+    body = f": {text}\n\n".encode()
     handler.wfile.write(body)
     handler.wfile.flush()
 
@@ -703,14 +709,14 @@ def _authorize_request(
     return None
 
 
-def create_handler(app: StudioApp):
+def create_handler(app: StudioApp) -> type[BaseHTTPRequestHandler]:
     class StudioHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def log_message(self, _format: str, *_args: Any) -> None:  # noqa: D401
+        def log_message(self, _format: str, *_args: Any) -> None:
             return
 
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
 
@@ -756,9 +762,7 @@ def create_handler(app: StudioApp):
                 if path == "/structures/file":
                     query = parse_qs(parsed.query, keep_blank_values=False)
                     path_value = query.get("path", [""])[0]
-                    data, content_type = app.read_structure_file(
-                        path_value=path_value
-                    )
+                    data, content_type = app.read_structure_file(path_value=path_value)
                     _text_response(
                         self,
                         status=HTTPStatus.OK,
@@ -804,14 +808,14 @@ def create_handler(app: StudioApp):
                 )
             except ApiError as exc:
                 _json_response(self, exc.status_code, {"error": exc.message})
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _json_response(
                     self,
                     HTTPStatus.INTERNAL_SERVER_ERROR,
                     {"error": str(exc), "type": type(exc).__name__},
                 )
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             parsed = urlparse(self.path)
             path = parsed.path
             try:
@@ -854,10 +858,12 @@ def create_handler(app: StudioApp):
                     )
                     return
 
-                _json_response(self, HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
+                _json_response(
+                    self, HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"}
+                )
             except ApiError as exc:
                 _json_response(self, exc.status_code, {"error": exc.message})
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _json_response(
                     self,
                     HTTPStatus.INTERNAL_SERVER_ERROR,
