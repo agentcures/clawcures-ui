@@ -28,16 +28,20 @@ class CompatibilityTest(unittest.TestCase):
         pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         project = pyproject["project"]
         self.assertIn(
-            "<3.14",
+            "<3.13",
             str(project["requires-python"]),
-            "clawcures-ui cannot claim Python 3.14 support while live execution depends on refua-mcp.",
+            "clawcures-ui cannot claim Python 3.13+ support while live execution depends on packages that do not install there.",
         )
         self.assertFalse(
             any(
-                str(item).strip() == "Programming Language :: Python :: 3.14"
+                str(item).strip()
+                in {
+                    "Programming Language :: Python :: 3.13",
+                    "Programming Language :: Python :: 3.14",
+                }
                 for item in project["classifiers"]
             ),
-            "clawcures-ui classifiers must not advertise Python 3.14 support.",
+            "clawcures-ui classifiers must not advertise unsupported Python versions.",
         )
 
     def test_legacy_module_alias_still_exports_server_factory(self) -> None:
