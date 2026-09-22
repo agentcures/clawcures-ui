@@ -32,9 +32,7 @@ This project is designed to reuse existing workspace components:
 
 ```bash
 cd path/to/clawcures-ui
-python3.13 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+uv sync
 ```
 
 Use Python `>=3.11,<3.14`. Live execution depends on `refua-mcp`, which does not

@@ -25,7 +25,6 @@ artifacts/
 .artifacts/
 
 .DS_Store
-poetry.toml
 
 .refua-studio/
 .refua-studio-data/

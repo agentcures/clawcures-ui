@@ -46,9 +46,13 @@ Repository = "https://github.com/agentcures/clawcures-ui"
 Documentation = "https://github.com/agentcures/clawcures-ui#readme"
 Issues = "https://github.com/agentcures/clawcures-ui/issues"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
   "pre-commit>=4.5.1",
+  "pytest>=8.0",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "twine>=6.1",
 ]
 
 [project.scripts]

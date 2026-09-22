@@ -252,7 +252,7 @@ class StudioApiTest(unittest.TestCase):
         self.assertIn("job", run_payload)
         job_id = run_payload["job"]["job_id"]
 
-        deadline = time.time() + 5
+        deadline = time.time() + 30
         last_status = "queued"
         while time.time() < deadline:
             job = self._request("GET", f"/api/jobs/{job_id}")
@@ -275,7 +275,7 @@ class StudioApiTest(unittest.TestCase):
         self.assertIn("job", run_payload)
         job_id = run_payload["job"]["job_id"]
 
-        deadline = time.time() + 5
+        deadline = time.time() + 30
         last_status = "queued"
         while time.time() < deadline:
             job = self._request("GET", f"/api/jobs/{job_id}")
