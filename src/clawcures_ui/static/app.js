@@ -206,12 +206,40 @@ function inferMolstarFormat(pathValue, formatValue) {
   return null;
 }
 
+const ACCESS_TOKEN_STORAGE_KEY = "clawcures.accessToken";
+
+function accessToken() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get("access_token");
+    if (fromQuery) {
+      window.sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, fromQuery);
+      params.delete("access_token");
+      const next = params.toString();
+      const nextUrl = `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`;
+      window.history.replaceState(null, "", nextUrl);
+    }
+    return window.sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY) || "";
+  } catch (_err) {
+    return "";
+  }
+}
+
+function withAccessToken(url) {
+  const token = accessToken();
+  if (!token) {
+    return url;
+  }
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}access_token=${encodeURIComponent(token)}`;
+}
+
 function buildStructureUrl(pathValue) {
   const pathText = asText(pathValue);
   if (!pathText) {
     return null;
   }
-  return `/structures/file?path=${encodeURIComponent(pathText)}`;
+  return withAccessToken(`/structures/file?path=${encodeURIComponent(pathText)}`);
 }
 
 function ensureMolstarCss() {
@@ -497,6 +525,10 @@ async function api(path, options = {}) {
     "Content-Type": "application/json",
     ...(options.headers || {}),
   };
+  const token = accessToken();
+  if (token && !headers.Authorization && !headers.authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
 
   const response = await fetch(path, {
     ...options,
@@ -1070,9 +1102,10 @@ async function refreshJobs() {
 
 function jobsStreamPath() {
   const status = jobStatusFilter.value;
-  return status
+  const path = status
     ? `/api/jobs/stream?limit=80&status=${encodeURIComponent(status)}`
     : "/api/jobs/stream?limit=80";
+  return withAccessToken(path);
 }
 
 function startJobsStream() {

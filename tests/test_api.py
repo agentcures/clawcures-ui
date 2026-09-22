@@ -619,6 +619,32 @@ class StudioApiAuthTest(unittest.TestCase):
         ok = self._request("GET", "/api/health", token="viewer-token")
         self.assertTrue(ok["ok"])
 
+        query_auth = self._request("GET", "/api/health?access_token=viewer-token")
+        self.assertTrue(query_auth["ok"])
+
+    def test_structure_file_requires_auth_when_enabled(self) -> None:
+        structure_path = self.app.config.data_dir / "mock_complex.cif"
+        structure_path.parent.mkdir(parents=True, exist_ok=True)
+        structure_path.write_text("data_mock\n", encoding="utf-8")
+        url_path = quote(str(structure_path), safe="")
+
+        missing = self._request(
+            "GET",
+            f"/structures/file?path={url_path}",
+            allow_error=True,
+        )
+        self.assertEqual(missing["status_code"], 401)
+
+        url = (
+            f"http://{self.host}:{self.port}/structures/file"
+            f"?path={url_path}&access_token=viewer-token"
+        )
+        request = Request(url, method="GET")
+        with urlopen(request, timeout=5) as response:
+            body = response.read().decode("utf-8")
+            self.assertEqual(response.status, 200)
+            self.assertIn("data_mock", body)
+
     def test_post_requires_operator_role(self) -> None:
         payload = {
             "plan": {"calls": [{"tool": "refua_validate_spec", "args": {}}]},

@@ -101,19 +101,37 @@ class BackgroundRunner:
                     "status": latest["status"],
                     "message": "Job cancelled.",
                 }
+            # The worker can start between the status read and future.cancel().
+            job = self._store.get_job(job_id) or job
 
-        if job["status"] == "running":
+        if job["status"] in {"queued", "running"}:
             if cancel_event is not None:
                 cancel_event.set()
-            self._store.request_cancel(
-                job_id, reason="Cancellation requested by user while running."
-            )
+            if job["status"] == "queued":
+                cancelled_now = self._store.set_cancelled(
+                    job_id, "Cancelled by user before execution."
+                )
+                if not cancelled_now:
+                    self._store.request_cancel(
+                        job_id,
+                        reason="Cancellation requested by user while running.",
+                    )
+                message = (
+                    "Job cancelled."
+                    if cancelled_now
+                    else "Cancellation requested for running job."
+                )
+            else:
+                self._store.request_cancel(
+                    job_id, reason="Cancellation requested by user while running."
+                )
+                message = "Cancellation requested for running job."
             latest = self._store.get_job(job_id) or job
             return {
                 "job_id": job_id,
                 "cancelled": True,
                 "status": latest["status"],
-                "message": "Cancellation requested for running job.",
+                "message": message,
             }
 
         latest = self._store.get_job(job_id) or job

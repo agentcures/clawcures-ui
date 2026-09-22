@@ -637,6 +637,8 @@ def _structure_content_type(path: Path) -> str:
 
 
 def _required_api_role(*, method: str, path: str) -> str | None:
+    if path == "/structures/file":
+        return _ROLE_VIEWER
     if not path.startswith("/api/"):
         return None
     normalized_method = method.upper()
@@ -651,13 +653,15 @@ def _required_api_role(*, method: str, path: str) -> str | None:
 
 def _extract_bearer_token(handler: BaseHTTPRequestHandler) -> str | None:
     raw = str(handler.headers.get("Authorization", "")).strip()
-    if not raw:
-        return None
-    parts = raw.split(None, 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        return None
-    token = parts[1].strip()
-    return token or None
+    if raw:
+        parts = raw.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1].strip()
+            if token:
+                return token
+    query = parse_qs(urlparse(handler.path).query, keep_blank_values=False)
+    query_token = query.get("access_token", [""])[0].strip()
+    return query_token or None
 
 
 def _is_role_allowed(*, token_roles: frozenset[str], required_role: str) -> bool:
